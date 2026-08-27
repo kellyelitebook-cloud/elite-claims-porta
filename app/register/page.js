@@ -41,44 +41,55 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center">Create Account</h1>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md border border-gray-200">
         
-        <form onSubmit={handleRegister} className="space-y-4">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Create Account</h1>
+          <p className="text-gray-600">Join the Elite Claims Portal</p>
+        </div>
+
+        <form onSubmit={handleRegister} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium mb-1">Full Name</label>
+            <label className="block text-sm font-semibold text-gray-800 mb-1">
+              Full Name
+            </label>
             <input
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               required
-              className="w-full border px-3 py-2 rounded"
+              className="w-full border border-gray-300 px-4 py-2.5 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Enter your full name"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
+            <label className="block text-sm font-semibold text-gray-800 mb-1">
+              Email
+            </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full border px-3 py-2 rounded"
+              className="w-full border border-gray-300 px-4 py-2.5 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Enter your email"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
+            <label className="block text-sm font-semibold text-gray-800 mb-1">
+              Password
+            </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full border px-3 py-2 rounded"
+              className="w-full border border-gray-300 px-4 py-2.5 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Minimum 6 characters"
             />
           </div>
@@ -86,19 +97,23 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:bg-blue-300"
+            className="w-full bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 transition font-medium disabled:bg-blue-400"
           >
             {loading ? 'Creating account...' : 'Register'}
           </button>
         </form>
 
         {message && (
-          <p className="mt-4 text-center text-sm text-green-600">{message}</p>
+          <p className={`mt-4 text-center text-sm font-medium ${
+            message.includes('successful') ? 'text-green-600' : 'text-red-600'
+          }`}>
+            {message}
+          </p>
         )}
 
-        <p className="mt-6 text-center text-sm">
+        <p className="mt-6 text-center text-sm text-gray-600">
           Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">
+          <Link href="/login" className="text-blue-600 font-medium hover:underline">
             Login here
           </Link>
         </p>

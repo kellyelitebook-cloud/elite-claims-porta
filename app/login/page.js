@@ -28,7 +28,6 @@ export default function LoginPage() {
       return
     }
 
-    // Check if user is approved
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('is_approved, role, full_name')
@@ -49,7 +48,6 @@ export default function LoginPage() {
       return
     }
 
-    // Redirect based on role
     if (profile.role === 'admin') {
       router.push('/admin')
     } else {
@@ -60,8 +58,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md border border-gray-200">
-        
-        {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Elite Claims Portal</h1>
           <p className="text-gray-600">Sign in to your account</p>
@@ -111,7 +107,13 @@ export default function LoginPage() {
           </p>
         )}
 
-        <p className="mt-6 text-center text-sm text-gray-600">
+        <p className="mt-4 text-center text-sm">
+          <Link href="/forgot-password" className="text-blue-600 font-medium hover:underline">
+            Forgot Password?
+          </Link>
+        </p>
+
+        <p className="mt-4 text-center text-sm text-gray-600">
           Don’t have an account?{' '}
           <Link href="/register" className="text-blue-600 font-medium hover:underline">
             Register here

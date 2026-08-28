@@ -9,23 +9,27 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Claim form states
   const [eliteGroup, setEliteGroup] = useState('Elite 1')
   const [clients, setClients] = useState([])
   const [selectedClient, setSelectedClient] = useState('')
   const [products, setProducts] = useState([])
-  const [selectedProduct, setSelectedProduct] = useState('')
-  const [claimedQty, setClaimedQty] = useState('')
-  const [medRep, setMedRep] = useState('')
   const [medReps, setMedReps] = useState([])
-  const [comment, setComment] = useState('')
   const [evidenceFile, setEvidenceFile] = useState(null)
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [showClientList, setShowClientList] = useState(false)
 
-  // All claims
+  const emptyLine = () => ({
+    id: Date.now() + Math.random(),
+    medRep: '',
+    product: '',
+    destination: '',
+    qty: ''
+  })
+
+  const [claimLines, setClaimLines] = useState([emptyLine()])
+
   const [allClaims, setAllClaims] = useState([])
   const [profilesMap, setProfilesMap] = useState({})
 
@@ -45,7 +49,6 @@ export default function DashboardPage() {
       fetchProducts()
     } else {
       setProducts([])
-      setSelectedProduct('')
     }
   }, [selectedClient])
 
@@ -100,7 +103,6 @@ export default function DashboardPage() {
     setAllClaims(claimsData)
   }
 
-  // Fetch ALL clients (handles Supabase 1000 row limit)
   const fetchAllClients = async () => {
     let allPartyNames = []
     let from = 0
@@ -114,10 +116,7 @@ export default function DashboardPage() {
         .eq('elite_group', eliteGroup)
         .range(from, from + pageSize - 1)
 
-      if (error) {
-        console.error(error)
-        break
-      }
+      if (error) break
 
       if (data && data.length > 0) {
         allPartyNames = [...allPartyNames, ...data.map(item => item.party_name)]
@@ -147,7 +146,6 @@ export default function DashboardPage() {
       )]
       uniqueReps.sort()
       setMedReps(uniqueReps)
-      setMedRep('')
     }
   }
 
@@ -162,10 +160,7 @@ export default function DashboardPage() {
       const productMap = {}
       data.forEach(item => {
         if (item.product_name) {
-          if (!productMap[item.product_name]) {
-            productMap[item.product_name] = 0
-          }
-          productMap[item.product_name] += Number(item.billed_qty) || 0
+          productMap[item.product_name] = (productMap[item.product_name] || 0) + (Number(item.billed_qty) || 0)
         }
       })
 
@@ -178,64 +173,89 @@ export default function DashboardPage() {
     }
   }
 
+  const updateLine = (id, field, value) => {
+    setClaimLines(prev => prev.map(line => (
+      line.id === id ? { ...line, [field]: value } : line
+    )))
+  }
+
+  const addLine = () => {
+    setClaimLines(prev => [...prev, emptyLine()])
+  }
+
+  const removeLine = (id) => {
+    setClaimLines(prev => prev.length === 1 ? prev : prev.filter(line => line.id !== id))
+  }
+
   const handleSubmitClaim = async (e) => {
     e.preventDefault()
-    if (!selectedClient || !selectedProduct || !claimedQty || !medRep) {
-      setMessage('Please fill all required fields')
+
+    if (!selectedClient) {
+      setMessage('Please select a client')
+      return
+    }
+
+    if (!evidenceFile) {
+      setMessage('Evidence is required')
+      return
+    }
+
+    const validLines = claimLines.filter(line =>
+      line.medRep && line.product && line.qty && Number(line.qty) > 0
+    )
+
+    if (validLines.length === 0) {
+      setMessage('Please add at least one complete claim line')
       return
     }
 
     setSubmitting(true)
-    setMessage('Submitting claim...')
+    setMessage('Submitting claims...')
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      let evidenceUrl = null
 
-      if (evidenceFile) {
-        const fileExt = evidenceFile.name.split('.').pop()
-        const fileName = `${user.id}_${Date.now()}.${fileExt}`
+      const fileExt = evidenceFile.name.split('.').pop()
+      const fileName = `${user.id}_${Date.now()}.${fileExt}`
 
-        const { error: uploadError } = await supabase.storage
-          .from('evidence')
-          .upload(fileName, evidenceFile)
+      const { error: uploadError } = await supabase.storage
+        .from('evidence')
+        .upload(fileName, evidenceFile)
 
-        if (uploadError) {
-          setMessage('Error uploading evidence: ' + uploadError.message)
-          setSubmitting(false)
-          return
-        }
-
-        const { data: urlData } = supabase.storage
-          .from('evidence')
-          .getPublicUrl(fileName)
-
-        evidenceUrl = urlData.publicUrl
+      if (uploadError) {
+        setMessage('Error uploading evidence: ' + uploadError.message)
+        setSubmitting(false)
+        return
       }
 
-      const { error } = await supabase.from('claims').insert({
+      const { data: urlData } = supabase.storage
+        .from('evidence')
+        .getPublicUrl(fileName)
+
+      const evidenceUrl = urlData.publicUrl
+
+      const rows = validLines.map(line => ({
         user_id: user.id,
         elite_group: eliteGroup,
         party_name: selectedClient,
-        product_name: selectedProduct,
-        claimed_qty: Number(claimedQty),
-        med_rep: medRep,
-        comment: comment || null,
+        product_name: line.product,
+        claimed_qty: Number(line.qty),
+        med_rep: line.medRep,
+        comment: line.destination || null,
         evidence_url: evidenceUrl,
         status: 'pending'
-      })
+      }))
+
+      const { error } = await supabase.from('claims').insert(rows)
 
       if (error) {
         setMessage('Error: ' + error.message)
       } else {
-        setMessage('Claim submitted successfully! Waiting for admin approval.')
+        setMessage(`${rows.length} claim(s) submitted successfully! Waiting for admin approval.`)
         setSelectedClient('')
-        setSelectedProduct('')
-        setClaimedQty('')
-        setMedRep('')
-        setComment('')
-        setEvidenceFile(null)
         setClientSearch('')
+        setEvidenceFile(null)
+        setClaimLines([emptyLine()])
         fetchAllClaims()
       }
     } catch (err) {
@@ -250,7 +270,6 @@ export default function DashboardPage() {
     router.push('/login')
   }
 
-  // Filtered clients for the searchable dropdown
   const filteredClients = clients.filter(client =>
     client.toLowerCase().includes(clientSearch.toLowerCase())
   )
@@ -272,9 +291,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-100 p-6 text-gray-900">
-      <div className="max-w-5xl mx-auto">
-
-        {/* Header */}
+      <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
@@ -288,12 +305,13 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Claim Form */}
         <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 mb-5">Submit New Claim</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
+          <p className="text-sm text-gray-700 mb-5">
+            Use one evidence for many lines. Example: Le-Sure Kit from Transwide to Meru (Collins), Eldoret (Chepkoech), Mombasa (another rep).
+          </p>
 
-          <form onSubmit={handleSubmitClaim} className="space-y-4">
-            {/* Elite Group */}
+          <form onSubmit={handleSubmitClaim} className="space-y-5">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
               <select
@@ -301,10 +319,9 @@ export default function DashboardPage() {
                 onChange={(e) => {
                   setEliteGroup(e.target.value)
                   setSelectedClient('')
-                  setSelectedProduct('')
                   setClientSearch('')
-                  setMedRep('')
                   setShowClientList(false)
+                  setClaimLines([emptyLine()])
                 }}
                 className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
               >
@@ -316,29 +333,8 @@ export default function DashboardPage() {
               </select>
             </div>
 
-            {/* MedRep */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">MedRep Name *</label>
-              <select
-                value={medRep}
-                onChange={(e) => setMedRep(e.target.value)}
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
-                required
-              >
-                <option value="">-- Select MedRep --</option>
-                {medReps.map((rep) => (
-                  <option key={rep} value={rep}>{rep}</option>
-                ))}
-              </select>
-              {medReps.length === 0 && (
-                <p className="text-xs text-gray-600 mt-1">No MedReps found for this Elite Group</p>
-              )}
-            </div>
-
-            {/* Smart Client Search / Select */}
             <div className="relative">
               <label className="block text-sm font-semibold text-gray-800 mb-1">Select Client *</label>
-              
               <input
                 type="text"
                 value={selectedClient || clientSearch}
@@ -353,7 +349,6 @@ export default function DashboardPage() {
                 required
               />
 
-              {/* Dropdown List */}
               {showClientList && (
                 <div className="absolute z-20 w-full mt-1 bg-white border border-gray-400 rounded shadow-lg max-h-60 overflow-y-auto">
                   {filteredClients.length === 0 ? (
@@ -376,72 +371,113 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Click outside to close */}
               {showClientList && (
-                <div 
-                  className="fixed inset-0 z-10" 
+                <div
+                  className="fixed inset-0 z-10"
                   onClick={() => setShowClientList(false)}
                 ></div>
               )}
             </div>
 
-            {/* Product */}
             <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Select Product *</label>
-              <select
-                value={selectedProduct}
-                onChange={(e) => setSelectedProduct(e.target.value)}
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
-                required
-                disabled={!selectedClient}
-              >
-                <option value="">-- Select Product --</option>
-                {products.map((product) => (
-                  <option key={product.name} value={product.name}>
-                    {product.name} (Available: {product.total_qty})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Quantity */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Claimed Quantity *</label>
-              <input
-                type="number"
-                value={claimedQty}
-                onChange={(e) => setClaimedQty(e.target.value)}
-                min="1"
-                required
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
-                placeholder="Enter quantity"
-              />
-            </div>
-
-            {/* Comment */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Comment / Destination</label>
-              <textarea
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                rows="3"
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
-                placeholder="Example: Claiming from Transwide to Matuu Level 5 Hospital"
-              />
-            </div>
-
-            {/* Evidence */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence (Image or PDF)</label>
+              <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence (Image or PDF) *</label>
               <input
                 type="file"
-                accept="image/*,.pdf"
+                accept="image/*,.pdf,.xlsx,.xls"
                 onChange={(e) => setEvidenceFile(e.target.files[0])}
                 className="w-full border border-gray-400 p-2 rounded text-gray-900"
+                required
               />
               {evidenceFile && (
                 <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>
               )}
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-3">
+                <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium"
+                >
+                  + Add Line
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {claimLines.map((line, index) => (
+                  <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold mb-1">MedRep *</label>
+                      <select
+                        value={line.medRep}
+                        onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
+                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
+                        required
+                      >
+                        <option value="">Select</option>
+                        {medReps.map((rep) => (
+                          <option key={rep} value={rep}>{rep}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-4">
+                      <label className="block text-xs font-semibold mb-1">Product *</label>
+                      <select
+                        value={line.product}
+                        onChange={(e) => updateLine(line.id, 'product', e.target.value)}
+                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
+                        required
+                        disabled={!selectedClient}
+                      >
+                        <option value="">Select</option>
+                        {products.map((product) => (
+                          <option key={product.name} value={product.name}>
+                            {product.name} (Avail: {product.total_qty})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-3">
+                      <label className="block text-xs font-semibold mb-1">Destination</label>
+                      <input
+                        type="text"
+                        value={line.destination}
+                        onChange={(e) => updateLine(line.id, 'destination', e.target.value)}
+                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm"
+                        placeholder="Meru / Thika / Eldoret"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold mb-1">Qty *</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={line.qty}
+                        onChange={(e) => updateLine(line.id, 'qty', e.target.value)}
+                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm"
+                        required
+                      />
+                    </div>
+
+                    <div className="md:col-span-1 flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => removeLine(line.id)}
+                        className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700"
+                        disabled={claimLines.length === 1}
+                      >
+                        X
+                      </button>
+                    </div>
+                    <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <button
@@ -449,7 +485,7 @@ export default function DashboardPage() {
               disabled={submitting}
               className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium"
             >
-              {submitting ? 'Submitting...' : 'Submit Claim'}
+              {submitting ? 'Submitting...' : 'Submit All Claim Lines'}
             </button>
           </form>
 
@@ -460,7 +496,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* All Claims Grouped by Elite */}
         <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-5">All Claims (Grouped by Elite)</h2>
 
@@ -542,7 +577,6 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-
       </div>
     </div>
   )

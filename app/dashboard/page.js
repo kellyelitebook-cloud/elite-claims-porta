@@ -22,9 +22,9 @@ export default function DashboardPage() {
   const [rejectingId, setRejectingId] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
 
-  const emptyLine = (medRep = '') => ({
+  const emptyLine = () => ({
     id: Date.now() + Math.random(),
-    medRep,
+    medRep: '',
     product: '',
     destination: '',
     qty: ''
@@ -73,9 +73,6 @@ export default function DashboardPage() {
     }
 
     setProfile(data)
-    if (data.role === 'salesman' && data.med_rep_name) {
-      setClaimLines([emptyLine(data.med_rep_name)])
-    }
     setLoading(false)
     fetchAllClaims()
   }
@@ -177,13 +174,8 @@ export default function DashboardPage() {
     )))
   }
 
-  const addLine = () => {
-    setClaimLines(prev => [...prev, emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
-  }
-
-  const removeLine = (id) => {
-    setClaimLines(prev => prev.length === 1 ? prev : prev.filter(line => line.id !== id))
-  }
+  const addLine = () => setClaimLines(prev => [...prev, emptyLine()])
+  const removeLine = (id) => setClaimLines(prev => prev.length === 1 ? prev : prev.filter(line => line.id !== id))
 
   const handleSubmitClaim = async (e) => {
     e.preventDefault()
@@ -226,7 +218,6 @@ export default function DashboardPage() {
 
       const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
       const evidenceUrl = urlData.publicUrl
-
       const nextStatus = isSalesman ? 'pending_manager' : 'pending_admin'
 
       const rows = validLines.map(line => ({
@@ -235,7 +226,7 @@ export default function DashboardPage() {
         party_name: selectedClient,
         product_name: line.product,
         claimed_qty: Number(line.qty),
-        med_rep: isSalesman ? (profile.med_rep_name || line.medRep) : line.medRep,
+        med_rep: line.medRep,
         comment: line.destination || null,
         evidence_url: evidenceUrl,
         status: nextStatus
@@ -254,7 +245,7 @@ export default function DashboardPage() {
         setSelectedClient('')
         setClientSearch('')
         setEvidenceFile(null)
-        setClaimLines([emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
+        setClaimLines([emptyLine()])
         fetchAllClaims()
       }
     } catch (err) {
@@ -268,14 +259,10 @@ export default function DashboardPage() {
     const updateData = { status }
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
 
-    const { error } = await supabase
-      .from('claims')
-      .update(updateData)
-      .eq('id', claimId)
+    const { error } = await supabase.from('claims').update(updateData).eq('id', claimId)
 
-    if (error) {
-      setReviewMessage(error.message)
-    } else {
+    if (error) setReviewMessage(error.message)
+    else {
       setReviewMessage(status === 'pending_admin' ? 'Sent to admin' : 'Claim rejected')
       setRejectingId(null)
       setRejectionReason('')
@@ -299,7 +286,7 @@ export default function DashboardPage() {
   )
 
   const visibleClaims = isSalesman
-    ? allClaims.filter(c => c.user_id === profile?.id || c.med_rep === profile?.med_rep_name)
+    ? allClaims.filter(c => c.user_id === profile?.id)
     : allClaims
 
   const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager')
@@ -327,15 +314,9 @@ export default function DashboardPage() {
             <h1 className="text-2xl font-bold text-gray-900">
               {isSalesman ? 'Salesman Dashboard' : 'Manager Dashboard'}
             </h1>
-            <p className="text-gray-700 font-medium">
-              Welcome, {profile?.full_name}
-              {isSalesman && profile?.med_rep_name ? ` (${profile.med_rep_name})` : ''}
-            </p>
+            <p className="text-gray-700 font-medium">Welcome, {profile?.full_name}</p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium"
-          >
+          <button onClick={handleLogout} className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium">
             Logout
           </button>
         </div>
@@ -344,7 +325,6 @@ export default function DashboardPage() {
           <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Review Salesman Claims</h2>
             {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
-
             {pendingManagerClaims.length === 0 ? (
               <p className="text-gray-700">No salesman claims waiting for review.</p>
             ) : (
@@ -374,40 +354,17 @@ export default function DashboardPage() {
                         <td className="border p-2 text-right">{claim.claimed_qty}</td>
                         <td className="border p-2">{claim.comment || '-'}</td>
                         <td className="border p-2">
-                          {claim.evidence_url ? (
-                            <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a>
-                          ) : '-'}
+                          {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a> : '-'}
                         </td>
                         <td className="border p-2">
                           <div className="flex gap-2 mb-2">
-                            <button
-                              onClick={() => reviewClaim(claim.id, 'pending_admin')}
-                              className="bg-green-600 text-white px-2 py-1 rounded text-xs"
-                            >
-                              Approve to Admin
-                            </button>
-                            <button
-                              onClick={() => setRejectingId(claim.id)}
-                              className="bg-red-600 text-white px-2 py-1 rounded text-xs"
-                            >
-                              Reject
-                            </button>
+                            <button onClick={() => reviewClaim(claim.id, 'pending_admin')} className="bg-green-600 text-white px-2 py-1 rounded text-xs">Approve to Admin</button>
+                            <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Reject</button>
                           </div>
                           {rejectingId === claim.id && (
                             <div>
-                              <textarea
-                                value={rejectionReason}
-                                onChange={(e) => setRejectionReason(e.target.value)}
-                                className="w-full border p-1 text-xs rounded"
-                                rows="2"
-                                placeholder="Reason"
-                              />
-                              <button
-                                onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)}
-                                className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1"
-                              >
-                                Confirm Reject
-                              </button>
+                              <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full border p-1 text-xs rounded" rows="2" placeholder="Reason" />
+                              <button onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1">Confirm Reject</button>
                             </div>
                           )}
                         </td>
@@ -424,7 +381,7 @@ export default function DashboardPage() {
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
           <p className="text-sm text-gray-700 mb-5">
             {isSalesman
-              ? 'Submit your claims. Your manager will review them first.'
+              ? 'Pick the MedRep name from the Excel data. Example: TONNY ELD or TONNY KSM.'
               : 'Use one evidence for many lines. Your claims go directly to admin.'}
           </p>
 
@@ -438,7 +395,7 @@ export default function DashboardPage() {
                   setSelectedClient('')
                   setClientSearch('')
                   setShowClientList(false)
-                  setClaimLines([emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
+                  setClaimLines([emptyLine()])
                 }}
                 className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
               >
@@ -486,35 +443,19 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
-              {showClientList && (
-                <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>
-              )}
+              {showClientList && <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>}
             </div>
 
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence *</label>
-              <input
-                type="file"
-                accept="image/*,.pdf,.xlsx,.xls"
-                onChange={(e) => setEvidenceFile(e.target.files[0])}
-                className="w-full border border-gray-400 p-2 rounded text-gray-900"
-                required
-              />
-              {evidenceFile && (
-                <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>
-              )}
+              <input type="file" accept="image/*,.pdf,.xlsx,.xls" onChange={(e) => setEvidenceFile(e.target.files[0])} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
+              {evidenceFile && <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>}
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-3">
                 <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
-                <button
-                  type="button"
-                  onClick={addLine}
-                  className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium"
-                >
-                  + Add Line
-                </button>
+                <button type="button" onClick={addLine} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
               </div>
 
               <div className="space-y-3">
@@ -522,25 +463,17 @@ export default function DashboardPage() {
                   <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
                     <div className="md:col-span-2">
                       <label className="block text-xs font-semibold mb-1">MedRep *</label>
-                      {isSalesman ? (
-                        <input
-                          value={profile?.med_rep_name || ''}
-                          disabled
-                          className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-gray-200 text-sm"
-                        />
-                      ) : (
-                        <select
-                          value={line.medRep}
-                          onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
-                          className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
-                          required
-                        >
-                          <option value="">Select</option>
-                          {medReps.map((rep) => (
-                            <option key={rep} value={rep}>{rep}</option>
-                          ))}
-                        </select>
-                      )}
+                      <select
+                        value={line.medRep}
+                        onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
+                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
+                        required
+                      >
+                        <option value="">Select</option>
+                        {medReps.map((rep) => (
+                          <option key={rep} value={rep}>{rep}</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="md:col-span-4">
@@ -563,36 +496,16 @@ export default function DashboardPage() {
 
                     <div className="md:col-span-3">
                       <label className="block text-xs font-semibold mb-1">Destination</label>
-                      <input
-                        type="text"
-                        value={line.destination}
-                        onChange={(e) => updateLine(line.id, 'destination', e.target.value)}
-                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm"
-                        placeholder="Meru / Thika / Eldoret"
-                      />
+                      <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
                     </div>
 
                     <div className="md:col-span-2">
                       <label className="block text-xs font-semibold mb-1">Qty *</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={line.qty}
-                        onChange={(e) => updateLine(line.id, 'qty', e.target.value)}
-                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm"
-                        required
-                      />
+                      <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
                     </div>
 
                     <div className="md:col-span-1 flex items-end">
-                      <button
-                        type="button"
-                        onClick={() => removeLine(line.id)}
-                        className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700"
-                        disabled={claimLines.length === 1}
-                      >
-                        X
-                      </button>
+                      <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
                     </div>
                     <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
                   </div>
@@ -600,11 +513,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium"
-            >
+            <button type="submit" disabled={submitting} className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium">
               {submitting ? 'Submitting...' : 'Submit All Claim Lines'}
             </button>
           </form>
@@ -620,7 +529,6 @@ export default function DashboardPage() {
           <h2 className="text-xl font-bold text-gray-900 mb-5">
             {isSalesman ? 'My Claims' : 'All Claims (Grouped by Elite)'}
           </h2>
-
           {visibleClaims.length === 0 ? (
             <p className="text-gray-700">No claims submitted yet.</p>
           ) : (
@@ -665,9 +573,7 @@ export default function DashboardPage() {
                               </span>
                             </td>
                             <td className="border border-gray-300 p-2">
-                              {claim.evidence_url ? (
-                                <a href={claim.evidence_url} target="_blank" className="text-blue-700 hover:underline font-medium">View</a>
-                              ) : '-'}
+                              {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 hover:underline font-medium">View</a> : '-'}
                             </td>
                           </tr>
                         ))}

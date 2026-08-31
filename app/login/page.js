@@ -51,6 +51,7 @@ export default function LoginPage() {
     if (profile.role === 'admin') {
       router.push('/admin')
     } else {
+      // manager, salesman, or old "rep" accounts
       router.push('/dashboard')
     }
   }

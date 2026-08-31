@@ -12,11 +12,9 @@ export default function AdminPage() {
   const [message, setMessage] = useState('')
   const [uploading, setUploading] = useState(false)
   const [eliteGroup, setEliteGroup] = useState('Elite 1')
-
   const [viewGroup, setViewGroup] = useState('Elite 1')
   const [allocations, setAllocations] = useState([])
   const [loadingData, setLoadingData] = useState(false)
-
   const [claims, setClaims] = useState([])
   const [loadingClaims, setLoadingClaims] = useState(false)
   const [profilesMap, setProfilesMap] = useState({})
@@ -35,13 +33,11 @@ export default function AdminPage() {
       router.push('/login')
       return
     }
-
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single()
-
     if (!profile || profile.role !== 'admin') {
       router.push('/dashboard')
     }
@@ -53,7 +49,6 @@ export default function AdminPage() {
       .select('*')
       .eq('is_approved', false)
       .order('created_at', { ascending: false })
-
     if (!error) setUsers(data || [])
     setLoading(false)
   }
@@ -64,24 +59,20 @@ export default function AdminPage() {
       .from('claims')
       .select('*')
       .order('created_at', { ascending: false })
-
     if (error) {
       setLoadingClaims(false)
       return
     }
-
     const userIds = [...new Set(claimsData.map(c => c.user_id).filter(Boolean))]
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
-        .select('id, full_name, email')
+        .select('id, full_name, email, role')
         .in('id', userIds)
-
       const map = {}
       profilesData?.forEach(p => { map[p.id] = p })
       setProfilesMap(map)
     }
-
     setClaims(claimsData || [])
     setLoadingClaims(false)
   }
@@ -91,7 +82,6 @@ export default function AdminPage() {
       .from('profiles')
       .update({ is_approved: true })
       .eq('id', userId)
-
     if (error) setMessage(error.message)
     else {
       setMessage('User approved successfully!')
@@ -102,12 +92,10 @@ export default function AdminPage() {
   const updateClaimStatus = async (claimId, status, reason = null) => {
     const updateData = { status }
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
-
     const { error } = await supabase
       .from('claims')
       .update(updateData)
       .eq('id', claimId)
-
     if (error) setMessage(error.message)
     else {
       setMessage(`Claim ${status} successfully!`)
@@ -117,17 +105,22 @@ export default function AdminPage() {
     }
   }
 
+  const canAdminAct = (status) => status === 'pending_admin' || status === 'pending'
+
+  const statusLabel = (status) => {
+    if (status === 'pending_manager') return 'Waiting Manager'
+    if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
+    return status
+  }
+
   const downloadApprovedClaimsByGroup = (group) => {
     const approved = claims.filter(c => c.status === 'approved' && c.elite_group === group)
-
     if (approved.length === 0) {
       setMessage(`No approved claims found for ${group}`)
       return
     }
-
     const products = [...new Set(approved.map(c => c.product_name))].sort()
     const uniqueKeys = {}
-
     approved.forEach(claim => {
       const key = `${claim.party_name}|||${claim.med_rep}`
       if (!uniqueKeys[key]) {
@@ -140,7 +133,6 @@ export default function AdminPage() {
       uniqueKeys[key].products[claim.product_name] =
         (uniqueKeys[key].products[claim.product_name] || 0) + Number(claim.claimed_qty)
     })
-
     const dataRows = Object.values(uniqueKeys).map(item => {
       const row = {
         'DISTRIBUTOR': item.distributor,
@@ -151,7 +143,6 @@ export default function AdminPage() {
       })
       return row
     })
-
     dataRows.sort((a, b) => {
       if (a.DISTRIBUTOR < b.DISTRIBUTOR) return -1
       if (a.DISTRIBUTOR > b.DISTRIBUTOR) return 1
@@ -159,7 +150,6 @@ export default function AdminPage() {
       if (a['REP NAME'] > b['REP NAME']) return 1
       return 0
     })
-
     const header = ['DISTRIBUTOR', 'REP NAME', ...products]
     const aoa = [
       [`${group.toUpperCase()} CLAIMS TEMPLATE`],
@@ -167,13 +157,11 @@ export default function AdminPage() {
       [],
       header,
     ]
-
     dataRows.forEach(row => {
       const line = [row['DISTRIBUTOR'], row['REP NAME']]
       products.forEach(p => line.push(row[p] || ''))
       aoa.push(line)
     })
-
     const worksheet = XLSX.utils.aoa_to_sheet(aoa)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, `${group} Claims`)
@@ -189,22 +177,18 @@ export default function AdminPage() {
   const handleFileUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-
     setUploading(true)
     setMessage('Reading Excel file...')
-
     try {
       const data = await file.arrayBuffer()
       const workbook = XLSX.read(data)
       const sheet = workbook.Sheets[workbook.SheetNames[0]]
       const jsonData = XLSX.utils.sheet_to_json(sheet)
-
       if (jsonData.length === 0) {
         setMessage('Excel file is empty')
         setUploading(false)
         return
       }
-
       const rows = jsonData.map((row) => {
         let dateValue = null
         if (row['Date']) {
@@ -217,7 +201,6 @@ export default function AdminPage() {
             dateValue = row['Date']
           }
         }
-
         return {
           elite_group: eliteGroup,
           date: dateValue,
@@ -234,15 +217,12 @@ export default function AdminPage() {
           recommended_rep: row['Recommended_Rep'] || null,
         }
       })
-
       const { error } = await supabase.from('primary_allocations').insert(rows)
-
       if (error) setMessage('Error uploading: ' + error.message)
       else setMessage(`Successfully uploaded ${rows.length} rows for ${eliteGroup}`)
     } catch (err) {
       setMessage('Failed to read file: ' + err.message)
     }
-
     setUploading(false)
   }
 
@@ -253,7 +233,6 @@ export default function AdminPage() {
       .select('*')
       .eq('elite_group', viewGroup)
       .order('party_name')
-      
     if (!error) setAllocations(data || [])
     setLoadingData(false)
   }
@@ -276,8 +255,6 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-100 p-6 text-gray-900">
       <div className="max-w-6xl mx-auto">
-
-        {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
           <button
@@ -294,10 +271,8 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Upload Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Upload Primary Allocation</h2>
-
           <div className="mb-4">
             <label className="block text-sm font-semibold text-gray-800 mb-1">Select Elite Group</label>
             <select
@@ -312,7 +287,6 @@ export default function AdminPage() {
               <option value="Elite 5">Elite 5</option>
             </select>
           </div>
-
           <div>
             <label className="block text-sm font-semibold text-gray-800 mb-1">Choose Excel File</label>
             <input
@@ -323,15 +297,12 @@ export default function AdminPage() {
               className="border border-gray-400 p-2 rounded w-full text-gray-900"
             />
           </div>
-
           {uploading && <p className="mt-3 text-blue-700 font-medium">Uploading... Please wait</p>}
         </div>
 
-        {/* Claims Approval */}
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
             <h2 className="text-xl font-bold text-gray-900">Claims Approval (Grouped by Elite)</h2>
-
             <div className="flex flex-wrap gap-2">
               {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((group) => (
                 <button
@@ -362,7 +333,6 @@ export default function AdminPage() {
                   <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
                     {group} — {groupedClaims[group].length} claim(s)
                   </h3>
-
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border border-gray-300">
                       <thead className="bg-gray-200 text-gray-900">
@@ -408,7 +378,7 @@ export default function AdminPage() {
                                 claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
                                 'bg-yellow-200 text-yellow-900'
                               }`}>
-                                {claim.status}
+                                {statusLabel(claim.status)}
                               </span>
                               {claim.status === 'rejected' && claim.rejection_reason && (
                                 <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
@@ -417,7 +387,7 @@ export default function AdminPage() {
                               )}
                             </td>
                             <td className="border border-gray-300 p-2">
-                              {claim.status === 'pending' && (
+                              {canAdminAct(claim.status) && (
                                 <div className="space-y-2">
                                   <div className="flex gap-2">
                                     <button
@@ -433,7 +403,6 @@ export default function AdminPage() {
                                       Reject
                                     </button>
                                   </div>
-
                                   {rejectingId === claim.id && (
                                     <div className="mt-2">
                                       <textarea
@@ -464,6 +433,9 @@ export default function AdminPage() {
                                   )}
                                 </div>
                               )}
+                              {claim.status === 'pending_manager' && (
+                                <span className="text-xs text-gray-600">Waiting manager first</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -476,10 +448,8 @@ export default function AdminPage() {
           )}
         </div>
 
-        {/* View Uploaded Data */}
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">View Uploaded Data</h2>
-
           <div className="flex gap-4 mb-4 items-end">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
@@ -502,7 +472,6 @@ export default function AdminPage() {
               Load Data
             </button>
           </div>
-
           {loadingData ? (
             <p className="text-gray-800">Loading data...</p>
           ) : allocations.length === 0 ? (
@@ -531,15 +500,12 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-sm text-gray-700">Showing first 100 rows only</p>
             </div>
           )}
         </div>
 
-        {/* Pending User Approvals */}
         <div className="bg-white rounded-lg shadow p-6 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Pending User Approvals</h2>
-
           {users.length === 0 ? (
             <p className="text-gray-700">No pending users</p>
           ) : (
@@ -549,6 +515,10 @@ export default function AdminPage() {
                   <div>
                     <p className="font-semibold text-gray-900">{user.full_name || 'No name'}</p>
                     <p className="text-sm text-gray-700">{user.email}</p>
+                    <p className="text-xs text-gray-600">
+                      Role: {user.role || 'manager'}
+                      {user.med_rep_name ? ` | MedRep: ${user.med_rep_name}` : ''}
+                    </p>
                   </div>
                   <button
                     onClick={() => approveUser(user.id)}
@@ -561,7 +531,6 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-
       </div>
     </div>
   )

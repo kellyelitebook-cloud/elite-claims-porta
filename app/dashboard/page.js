@@ -8,7 +8,6 @@ export default function DashboardPage() {
   const router = useRouter()
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
-
   const [eliteGroup, setEliteGroup] = useState('Elite 1')
   const [clients, setClients] = useState([])
   const [selectedClient, setSelectedClient] = useState('')
@@ -16,22 +15,27 @@ export default function DashboardPage() {
   const [medReps, setMedReps] = useState([])
   const [evidenceFile, setEvidenceFile] = useState(null)
   const [message, setMessage] = useState('')
+  const [reviewMessage, setReviewMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [showClientList, setShowClientList] = useState(false)
+  const [rejectingId, setRejectingId] = useState(null)
+  const [rejectionReason, setRejectionReason] = useState('')
 
-  const emptyLine = () => ({
+  const emptyLine = (medRep = '') => ({
     id: Date.now() + Math.random(),
-    medRep: '',
+    medRep,
     product: '',
     destination: '',
     qty: ''
   })
 
   const [claimLines, setClaimLines] = useState([emptyLine()])
-
   const [allClaims, setAllClaims] = useState([])
   const [profilesMap, setProfilesMap] = useState({})
+
+  const isSalesman = profile?.role === 'salesman'
+  const isManager = profile?.role === 'manager' || profile?.role === 'rep'
 
   useEffect(() => {
     getProfile()
@@ -45,16 +49,12 @@ export default function DashboardPage() {
   }, [eliteGroup])
 
   useEffect(() => {
-    if (selectedClient) {
-      fetchProducts()
-    } else {
-      setProducts([])
-    }
+    if (selectedClient) fetchProducts()
+    else setProducts([])
   }, [selectedClient])
 
   const getProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser()
-
     if (!user) {
       router.push('/login')
       return
@@ -73,6 +73,9 @@ export default function DashboardPage() {
     }
 
     setProfile(data)
+    if (data.role === 'salesman' && data.med_rep_name) {
+      setClaimLines([emptyLine(data.med_rep_name)])
+    }
     setLoading(false)
     fetchAllClaims()
   }
@@ -86,17 +89,14 @@ export default function DashboardPage() {
     if (error || !claimsData) return
 
     const userIds = [...new Set(claimsData.map(c => c.user_id).filter(Boolean))]
-
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
-        .select('id, full_name')
+        .select('id, full_name, role')
         .in('id', userIds)
 
       const map = {}
-      profilesData?.forEach(p => {
-        map[p.id] = p
-      })
+      profilesData?.forEach(p => { map[p.id] = p })
       setProfilesMap(map)
     }
 
@@ -163,12 +163,10 @@ export default function DashboardPage() {
           productMap[item.product_name] = (productMap[item.product_name] || 0) + (Number(item.billed_qty) || 0)
         }
       })
-
       const productList = Object.keys(productMap).map(name => ({
         name,
         total_qty: productMap[name]
       })).sort((a, b) => a.name.localeCompare(b.name))
-
       setProducts(productList)
     }
   }
@@ -180,7 +178,7 @@ export default function DashboardPage() {
   }
 
   const addLine = () => {
-    setClaimLines(prev => [...prev, emptyLine()])
+    setClaimLines(prev => [...prev, emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
   }
 
   const removeLine = (id) => {
@@ -194,7 +192,6 @@ export default function DashboardPage() {
       setMessage('Please select a client')
       return
     }
-
     if (!evidenceFile) {
       setMessage('Evidence is required')
       return
@@ -214,7 +211,6 @@ export default function DashboardPage() {
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
-
       const fileExt = evidenceFile.name.split('.').pop()
       const fileName = `${user.id}_${Date.now()}.${fileExt}`
 
@@ -228,11 +224,10 @@ export default function DashboardPage() {
         return
       }
 
-      const { data: urlData } = supabase.storage
-        .from('evidence')
-        .getPublicUrl(fileName)
-
+      const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
       const evidenceUrl = urlData.publicUrl
+
+      const nextStatus = isSalesman ? 'pending_manager' : 'pending_admin'
 
       const rows = validLines.map(line => ({
         user_id: user.id,
@@ -240,10 +235,10 @@ export default function DashboardPage() {
         party_name: selectedClient,
         product_name: line.product,
         claimed_qty: Number(line.qty),
-        med_rep: line.medRep,
+        med_rep: isSalesman ? (profile.med_rep_name || line.medRep) : line.medRep,
         comment: line.destination || null,
         evidence_url: evidenceUrl,
-        status: 'pending'
+        status: nextStatus
       }))
 
       const { error } = await supabase.from('claims').insert(rows)
@@ -251,11 +246,15 @@ export default function DashboardPage() {
       if (error) {
         setMessage('Error: ' + error.message)
       } else {
-        setMessage(`${rows.length} claim(s) submitted successfully! Waiting for admin approval.`)
+        setMessage(
+          isSalesman
+            ? `${rows.length} claim(s) submitted. Waiting for manager review.`
+            : `${rows.length} claim(s) submitted. Waiting for admin approval.`
+        )
         setSelectedClient('')
         setClientSearch('')
         setEvidenceFile(null)
-        setClaimLines([emptyLine()])
+        setClaimLines([emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
         fetchAllClaims()
       }
     } catch (err) {
@@ -265,16 +264,47 @@ export default function DashboardPage() {
     setSubmitting(false)
   }
 
+  const reviewClaim = async (claimId, status, reason = null) => {
+    const updateData = { status }
+    if (status === 'rejected' && reason) updateData.rejection_reason = reason
+
+    const { error } = await supabase
+      .from('claims')
+      .update(updateData)
+      .eq('id', claimId)
+
+    if (error) {
+      setReviewMessage(error.message)
+    } else {
+      setReviewMessage(status === 'pending_admin' ? 'Sent to admin' : 'Claim rejected')
+      setRejectingId(null)
+      setRejectionReason('')
+      fetchAllClaims()
+    }
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
+  }
+
+  const statusLabel = (status) => {
+    if (status === 'pending_manager') return 'Waiting Manager'
+    if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
+    return status
   }
 
   const filteredClients = clients.filter(client =>
     client.toLowerCase().includes(clientSearch.toLowerCase())
   )
 
-  const groupedClaims = allClaims.reduce((acc, claim) => {
+  const visibleClaims = isSalesman
+    ? allClaims.filter(c => c.user_id === profile?.id || c.med_rep === profile?.med_rep_name)
+    : allClaims
+
+  const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager')
+
+  const groupedClaims = visibleClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
     if (!acc[group]) acc[group] = []
     acc[group].push(claim)
@@ -294,8 +324,13 @@ export default function DashboardPage() {
       <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
-            <p className="text-gray-700 font-medium">Welcome, {profile?.full_name}</p>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {isSalesman ? 'Salesman Dashboard' : 'Manager Dashboard'}
+            </h1>
+            <p className="text-gray-700 font-medium">
+              Welcome, {profile?.full_name}
+              {isSalesman && profile?.med_rep_name ? ` (${profile.med_rep_name})` : ''}
+            </p>
           </div>
           <button
             onClick={handleLogout}
@@ -305,10 +340,92 @@ export default function DashboardPage() {
           </button>
         </div>
 
+        {isManager && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Review Salesman Claims</h2>
+            {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
+
+            {pendingManagerClaims.length === 0 ? (
+              <p className="text-gray-700">No salesman claims waiting for review.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border border-gray-300">
+                  <thead className="bg-gray-200">
+                    <tr>
+                      <th className="border p-2 text-left">Date</th>
+                      <th className="border p-2 text-left">Submitted By</th>
+                      <th className="border p-2 text-left">MedRep</th>
+                      <th className="border p-2 text-left">Client</th>
+                      <th className="border p-2 text-left">Product</th>
+                      <th className="border p-2 text-right">Qty</th>
+                      <th className="border p-2 text-left">Destination</th>
+                      <th className="border p-2 text-left">Evidence</th>
+                      <th className="border p-2 text-left">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingManagerClaims.map((claim) => (
+                      <tr key={claim.id}>
+                        <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                        <td className="border p-2">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                        <td className="border p-2">{claim.med_rep}</td>
+                        <td className="border p-2">{claim.party_name}</td>
+                        <td className="border p-2">{claim.product_name}</td>
+                        <td className="border p-2 text-right">{claim.claimed_qty}</td>
+                        <td className="border p-2">{claim.comment || '-'}</td>
+                        <td className="border p-2">
+                          {claim.evidence_url ? (
+                            <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a>
+                          ) : '-'}
+                        </td>
+                        <td className="border p-2">
+                          <div className="flex gap-2 mb-2">
+                            <button
+                              onClick={() => reviewClaim(claim.id, 'pending_admin')}
+                              className="bg-green-600 text-white px-2 py-1 rounded text-xs"
+                            >
+                              Approve to Admin
+                            </button>
+                            <button
+                              onClick={() => setRejectingId(claim.id)}
+                              className="bg-red-600 text-white px-2 py-1 rounded text-xs"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                          {rejectingId === claim.id && (
+                            <div>
+                              <textarea
+                                value={rejectionReason}
+                                onChange={(e) => setRejectionReason(e.target.value)}
+                                className="w-full border p-1 text-xs rounded"
+                                rows="2"
+                                placeholder="Reason"
+                              />
+                              <button
+                                onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)}
+                                className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1"
+                              >
+                                Confirm Reject
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
           <p className="text-sm text-gray-700 mb-5">
-            Use one evidence for many lines. Example: Le-Sure Kit from Transwide to Meru (Collins), Eldoret (Chepkoech), Mombasa (another rep).
+            {isSalesman
+              ? 'Submit your claims. Your manager will review them first.'
+              : 'Use one evidence for many lines. Your claims go directly to admin.'}
           </p>
 
           <form onSubmit={handleSubmitClaim} className="space-y-5">
@@ -321,7 +438,7 @@ export default function DashboardPage() {
                   setSelectedClient('')
                   setClientSearch('')
                   setShowClientList(false)
-                  setClaimLines([emptyLine()])
+                  setClaimLines([emptyLine(isSalesman ? (profile?.med_rep_name || '') : '')])
                 }}
                 className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
               >
@@ -348,7 +465,6 @@ export default function DashboardPage() {
                 className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
                 required
               />
-
               {showClientList && (
                 <div className="absolute z-20 w-full mt-1 bg-white border border-gray-400 rounded shadow-lg max-h-60 overflow-y-auto">
                   {filteredClients.length === 0 ? (
@@ -370,17 +486,13 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
-
               {showClientList && (
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setShowClientList(false)}
-                ></div>
+                <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence (Image or PDF) *</label>
+              <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence *</label>
               <input
                 type="file"
                 accept="image/*,.pdf,.xlsx,.xls"
@@ -410,17 +522,25 @@ export default function DashboardPage() {
                   <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
                     <div className="md:col-span-2">
                       <label className="block text-xs font-semibold mb-1">MedRep *</label>
-                      <select
-                        value={line.medRep}
-                        onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
-                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
-                        required
-                      >
-                        <option value="">Select</option>
-                        {medReps.map((rep) => (
-                          <option key={rep} value={rep}>{rep}</option>
-                        ))}
-                      </select>
+                      {isSalesman ? (
+                        <input
+                          value={profile?.med_rep_name || ''}
+                          disabled
+                          className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-gray-200 text-sm"
+                        />
+                      ) : (
+                        <select
+                          value={line.medRep}
+                          onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
+                          className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
+                          required
+                        >
+                          <option value="">Select</option>
+                          {medReps.map((rep) => (
+                            <option key={rep} value={rep}>{rep}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
 
                     <div className="md:col-span-4">
@@ -497,9 +617,11 @@ export default function DashboardPage() {
         </div>
 
         <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 mb-5">All Claims (Grouped by Elite)</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-5">
+            {isSalesman ? 'My Claims' : 'All Claims (Grouped by Elite)'}
+          </h2>
 
-          {allClaims.length === 0 ? (
+          {visibleClaims.length === 0 ? (
             <p className="text-gray-700">No claims submitted yet.</p>
           ) : (
             <div className="space-y-8">
@@ -508,7 +630,6 @@ export default function DashboardPage() {
                   <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
                     {group} — {groupedClaims[group].length} claim(s)
                   </h3>
-
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border border-gray-300">
                       <thead className="bg-gray-200 text-gray-900">
@@ -527,45 +648,26 @@ export default function DashboardPage() {
                       <tbody className="text-gray-900">
                         {groupedClaims[group].map((claim) => (
                           <tr key={claim.id} className="hover:bg-gray-50">
-                            <td className="border border-gray-300 p-2">
-                              {new Date(claim.created_at).toLocaleDateString()}
-                            </td>
-                            <td className="border border-gray-300 p-2 font-medium">
-                              {profilesMap[claim.user_id]?.full_name || 'Unknown'}
-                            </td>
+                            <td className="border border-gray-300 p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                            <td className="border border-gray-300 p-2 font-medium">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
                             <td className="border border-gray-300 p-2">{claim.med_rep}</td>
                             <td className="border border-gray-300 p-2">{claim.party_name}</td>
                             <td className="border border-gray-300 p-2">{claim.product_name}</td>
                             <td className="border border-gray-300 p-2 text-right font-medium">{claim.claimed_qty}</td>
-                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>
-                              {claim.comment || '-'}
-                            </td>
+                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
                             <td className="border border-gray-300 p-2">
                               <span className={`px-2 py-1 rounded text-xs font-medium ${
                                 claim.status === 'approved' ? 'bg-green-200 text-green-900' :
                                 claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
                                 'bg-yellow-200 text-yellow-900'
                               }`}>
-                                {claim.status}
+                                {statusLabel(claim.status)}
                               </span>
-                              {claim.status === 'rejected' && claim.rejection_reason && (
-                                <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
-                                  Reason: {claim.rejection_reason}
-                                </p>
-                              )}
                             </td>
                             <td className="border border-gray-300 p-2">
                               {claim.evidence_url ? (
-                                <a
-                                  href={claim.evidence_url}
-                                  target="_blank"
-                                  className="text-blue-700 hover:underline font-medium"
-                                >
-                                  View
-                                </a>
-                              ) : (
-                                <span className="text-gray-600">-</span>
-                              )}
+                                <a href={claim.evidence_url} target="_blank" className="text-blue-700 hover:underline font-medium">View</a>
+                              ) : '-'}
                             </td>
                           </tr>
                         ))}

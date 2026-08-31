@@ -179,7 +179,6 @@ export default function DashboardPage() {
 
   const handleSubmitClaim = async (e) => {
     e.preventDefault()
-
     if (!selectedClient) {
       setMessage('Please select a client')
       return
@@ -192,7 +191,6 @@ export default function DashboardPage() {
     const validLines = claimLines.filter(line =>
       line.medRep && line.product && line.qty && Number(line.qty) > 0
     )
-
     if (validLines.length === 0) {
       setMessage('Please add at least one complete claim line')
       return
@@ -233,7 +231,6 @@ export default function DashboardPage() {
       }))
 
       const { error } = await supabase.from('claims').insert(rows)
-
       if (error) {
         setMessage('Error: ' + error.message)
       } else {
@@ -260,7 +257,6 @@ export default function DashboardPage() {
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
 
     const { error } = await supabase.from('claims').update(updateData).eq('id', claimId)
-
     if (error) setReviewMessage(error.message)
     else {
       setReviewMessage(status === 'pending_admin' ? 'Sent to admin' : 'Claim rejected')
@@ -290,6 +286,13 @@ export default function DashboardPage() {
     : allClaims
 
   const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager')
+
+  const groupedPendingManagerClaims = pendingManagerClaims.reduce((acc, claim) => {
+    const group = claim.elite_group || 'Unknown'
+    if (!acc[group]) acc[group] = []
+    acc[group].push(claim)
+    return acc
+  }, {})
 
   const groupedClaims = visibleClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
@@ -325,53 +328,63 @@ export default function DashboardPage() {
           <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Review Salesman Claims</h2>
             {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
+
             {pendingManagerClaims.length === 0 ? (
               <p className="text-gray-700">No salesman claims waiting for review.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border border-gray-300">
-                  <thead className="bg-gray-200">
-                    <tr>
-                      <th className="border p-2 text-left">Date</th>
-                      <th className="border p-2 text-left">Submitted By</th>
-                      <th className="border p-2 text-left">MedRep</th>
-                      <th className="border p-2 text-left">Client</th>
-                      <th className="border p-2 text-left">Product</th>
-                      <th className="border p-2 text-right">Qty</th>
-                      <th className="border p-2 text-left">Destination</th>
-                      <th className="border p-2 text-left">Evidence</th>
-                      <th className="border p-2 text-left">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingManagerClaims.map((claim) => (
-                      <tr key={claim.id}>
-                        <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
-                        <td className="border p-2">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
-                        <td className="border p-2">{claim.med_rep}</td>
-                        <td className="border p-2">{claim.party_name}</td>
-                        <td className="border p-2">{claim.product_name}</td>
-                        <td className="border p-2 text-right">{claim.claimed_qty}</td>
-                        <td className="border p-2">{claim.comment || '-'}</td>
-                        <td className="border p-2">
-                          {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a> : '-'}
-                        </td>
-                        <td className="border p-2">
-                          <div className="flex gap-2 mb-2">
-                            <button onClick={() => reviewClaim(claim.id, 'pending_admin')} className="bg-green-600 text-white px-2 py-1 rounded text-xs">Approve to Admin</button>
-                            <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Reject</button>
-                          </div>
-                          {rejectingId === claim.id && (
-                            <div>
-                              <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full border p-1 text-xs rounded" rows="2" placeholder="Reason" />
-                              <button onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1">Confirm Reject</button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-8">
+                {Object.keys(groupedPendingManagerClaims).sort().map((group) => (
+                  <div key={group}>
+                    <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
+                      {group} — {groupedPendingManagerClaims[group].length} claim(s)
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border border-gray-300">
+                        <thead className="bg-gray-200">
+                          <tr>
+                            <th className="border p-2 text-left">Date</th>
+                            <th className="border p-2 text-left">Submitted By</th>
+                            <th className="border p-2 text-left">MedRep</th>
+                            <th className="border p-2 text-left">Client</th>
+                            <th className="border p-2 text-left">Product</th>
+                            <th className="border p-2 text-right">Qty</th>
+                            <th className="border p-2 text-left">Destination</th>
+                            <th className="border p-2 text-left">Evidence</th>
+                            <th className="border p-2 text-left">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groupedPendingManagerClaims[group].map((claim) => (
+                            <tr key={claim.id}>
+                              <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                              <td className="border p-2">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                              <td className="border p-2">{claim.med_rep}</td>
+                              <td className="border p-2">{claim.party_name}</td>
+                              <td className="border p-2">{claim.product_name}</td>
+                              <td className="border p-2 text-right">{claim.claimed_qty}</td>
+                              <td className="border p-2">{claim.comment || '-'}</td>
+                              <td className="border p-2">
+                                {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a> : '-'}
+                              </td>
+                              <td className="border p-2">
+                                <div className="flex gap-2 mb-2">
+                                  <button onClick={() => reviewClaim(claim.id, 'pending_admin')} className="bg-green-600 text-white px-2 py-1 rounded text-xs">Approve to Admin</button>
+                                  <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Reject</button>
+                                </div>
+                                {rejectingId === claim.id && (
+                                  <div>
+                                    <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full border p-1 text-xs rounded" rows="2" placeholder="Reason" />
+                                    <button onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1">Confirm Reject</button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -475,7 +488,6 @@ export default function DashboardPage() {
                         ))}
                       </select>
                     </div>
-
                     <div className="md:col-span-4">
                       <label className="block text-xs font-semibold mb-1">Product *</label>
                       <select
@@ -493,17 +505,14 @@ export default function DashboardPage() {
                         ))}
                       </select>
                     </div>
-
                     <div className="md:col-span-3">
                       <label className="block text-xs font-semibold mb-1">Destination</label>
                       <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
                     </div>
-
                     <div className="md:col-span-2">
                       <label className="block text-xs font-semibold mb-1">Qty *</label>
                       <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
                     </div>
-
                     <div className="md:col-span-1 flex items-end">
                       <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
                     </div>
@@ -571,6 +580,11 @@ export default function DashboardPage() {
                               }`}>
                                 {statusLabel(claim.status)}
                               </span>
+                              {claim.status === 'rejected' && claim.rejection_reason && (
+                                <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
+                                  Reason: {claim.rejection_reason}
+                                </p>
+                              )}
                             </td>
                             <td className="border border-gray-300 p-2">
                               {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 hover:underline font-medium">View</a> : '-'}

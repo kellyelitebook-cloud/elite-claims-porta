@@ -227,7 +227,8 @@ export default function DashboardPage() {
         med_rep: line.medRep,
         comment: line.destination || null,
         evidence_url: evidenceUrl,
-        status: nextStatus
+        status: nextStatus,
+        reviewed_by: isSalesman ? null : user.id
       }))
 
       const { error } = await supabase.from('claims').insert(rows)
@@ -253,7 +254,10 @@ export default function DashboardPage() {
   }
 
   const reviewClaim = async (claimId, status, reason = null) => {
+    const { data: { user } } = await supabase.auth.getUser()
+
     const updateData = { status }
+    if (user?.id) updateData.reviewed_by = user.id
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
 
     const { error } = await supabase.from('claims').update(updateData).eq('id', claimId)
@@ -328,7 +332,6 @@ export default function DashboardPage() {
           <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Review Salesman Claims</h2>
             {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
-
             {pendingManagerClaims.length === 0 ? (
               <p className="text-gray-700">No salesman claims waiting for review.</p>
             ) : (
@@ -470,7 +473,6 @@ export default function DashboardPage() {
                 <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
                 <button type="button" onClick={addLine} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
               </div>
-
               <div className="space-y-3">
                 {claimLines.map((line, index) => (
                   <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">

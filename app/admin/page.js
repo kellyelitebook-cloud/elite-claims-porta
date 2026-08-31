@@ -63,7 +63,13 @@ export default function AdminPage() {
       setLoadingClaims(false)
       return
     }
-    const userIds = [...new Set(claimsData.map(c => c.user_id).filter(Boolean))]
+
+    const userIds = [...new Set(
+      claimsData
+        .flatMap(c => [c.user_id, c.reviewed_by])
+        .filter(Boolean)
+    )]
+
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
@@ -73,6 +79,7 @@ export default function AdminPage() {
       profilesData?.forEach(p => { map[p.id] = p })
       setProfilesMap(map)
     }
+
     setClaims(claimsData || [])
     setLoadingClaims(false)
   }
@@ -257,10 +264,7 @@ export default function AdminPage() {
       <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-          <button
-            onClick={handleLogout}
-            className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium"
-          >
+          <button onClick={handleLogout} className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium">
             Logout
           </button>
         </div>
@@ -275,11 +279,7 @@ export default function AdminPage() {
           <h2 className="text-xl font-bold text-gray-900 mb-4">Upload Primary Allocation</h2>
           <div className="mb-4">
             <label className="block text-sm font-semibold text-gray-800 mb-1">Select Elite Group</label>
-            <select
-              value={eliteGroup}
-              onChange={(e) => setEliteGroup(e.target.value)}
-              className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
-            >
+            <select value={eliteGroup} onChange={(e) => setEliteGroup(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
               <option value="Elite 1">Elite 1</option>
               <option value="Elite 2">Elite 2</option>
               <option value="Elite 3">Elite 3</option>
@@ -289,13 +289,7 @@ export default function AdminPage() {
           </div>
           <div>
             <label className="block text-sm font-semibold text-gray-800 mb-1">Choose Excel File</label>
-            <input
-              type="file"
-              accept=".xlsx, .xls"
-              onChange={handleFileUpload}
-              disabled={uploading}
-              className="border border-gray-400 p-2 rounded w-full text-gray-900"
-            />
+            <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} disabled={uploading} className="border border-gray-400 p-2 rounded w-full text-gray-900" />
           </div>
           {uploading && <p className="mt-3 text-blue-700 font-medium">Uploading... Please wait</p>}
         </div>
@@ -305,18 +299,11 @@ export default function AdminPage() {
             <h2 className="text-xl font-bold text-gray-900">Claims Approval (Grouped by Elite)</h2>
             <div className="flex flex-wrap gap-2">
               {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((group) => (
-                <button
-                  key={group}
-                  onClick={() => downloadApprovedClaimsByGroup(group)}
-                  className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium"
-                >
+                <button key={group} onClick={() => downloadApprovedClaimsByGroup(group)} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">
                   Download {group}
                 </button>
               ))}
-              <button
-                onClick={fetchClaims}
-                className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 font-medium"
-              >
+              <button onClick={fetchClaims} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 font-medium">
                 Refresh
               </button>
             </div>
@@ -338,7 +325,7 @@ export default function AdminPage() {
                       <thead className="bg-gray-200 text-gray-900">
                         <tr>
                           <th className="border border-gray-300 p-2 text-left font-semibold">Date</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Submitted By</th>
+                          <th className="border border-gray-300 p-2 text-left font-semibold">Approved By</th>
                           <th className="border border-gray-300 p-2 text-left font-semibold">MedRep</th>
                           <th className="border border-gray-300 p-2 text-left font-semibold">Client</th>
                           <th className="border border-gray-300 p-2 text-left font-semibold">Product</th>
@@ -352,24 +339,18 @@ export default function AdminPage() {
                       <tbody className="text-gray-900">
                         {groupedClaims[group].map((claim) => (
                           <tr key={claim.id} className="hover:bg-gray-50">
-                            <td className="border border-gray-300 p-2">
-                              {new Date(claim.created_at).toLocaleDateString()}
-                            </td>
+                            <td className="border border-gray-300 p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
                             <td className="border border-gray-300 p-2 font-medium">
-                              {profilesMap[claim.user_id]?.full_name || 'Unknown'}
+                              {profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}
                             </td>
                             <td className="border border-gray-300 p-2">{claim.med_rep}</td>
                             <td className="border border-gray-300 p-2">{claim.party_name}</td>
                             <td className="border border-gray-300 p-2">{claim.product_name}</td>
                             <td className="border border-gray-300 p-2 text-right font-medium">{claim.claimed_qty}</td>
-                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>
-                              {claim.comment || '-'}
-                            </td>
+                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
                             <td className="border border-gray-300 p-2">
                               {claim.evidence_url ? (
-                                <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline font-medium">
-                                  View
-                                </a>
+                                <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline font-medium">View</a>
                               ) : '-'}
                             </td>
                             <td className="border border-gray-300 p-2">
@@ -390,44 +371,15 @@ export default function AdminPage() {
                               {canAdminAct(claim.status) && (
                                 <div className="space-y-2">
                                   <div className="flex gap-2">
-                                    <button
-                                      onClick={() => updateClaimStatus(claim.id, 'approved')}
-                                      className="bg-green-600 text-white px-2 py-1 rounded text-xs hover:bg-green-700 font-medium"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      onClick={() => setRejectingId(claim.id)}
-                                      className="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700 font-medium"
-                                    >
-                                      Reject
-                                    </button>
+                                    <button onClick={() => updateClaimStatus(claim.id, 'approved')} className="bg-green-600 text-white px-2 py-1 rounded text-xs hover:bg-green-700 font-medium">Approve</button>
+                                    <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700 font-medium">Reject</button>
                                   </div>
                                   {rejectingId === claim.id && (
                                     <div className="mt-2">
-                                      <textarea
-                                        value={rejectionReason}
-                                        onChange={(e) => setRejectionReason(e.target.value)}
-                                        placeholder="Reason for rejection..."
-                                        className="w-full border border-gray-400 p-1 text-xs rounded text-gray-900"
-                                        rows="2"
-                                      />
+                                      <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} placeholder="Reason for rejection..." className="w-full border border-gray-400 p-1 text-xs rounded text-gray-900" rows="2" />
                                       <div className="flex gap-2 mt-1">
-                                        <button
-                                          onClick={() => updateClaimStatus(claim.id, 'rejected', rejectionReason)}
-                                          className="bg-red-600 text-white px-2 py-1 rounded text-xs font-medium"
-                                        >
-                                          Confirm Reject
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            setRejectingId(null)
-                                            setRejectionReason('')
-                                          }}
-                                          className="bg-gray-500 text-white px-2 py-1 rounded text-xs font-medium"
-                                        >
-                                          Cancel
-                                        </button>
+                                        <button onClick={() => updateClaimStatus(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-medium">Confirm Reject</button>
+                                        <button onClick={() => { setRejectingId(null); setRejectionReason('') }} className="bg-gray-500 text-white px-2 py-1 rounded text-xs font-medium">Cancel</button>
                                       </div>
                                     </div>
                                   )}
@@ -453,11 +405,7 @@ export default function AdminPage() {
           <div className="flex gap-4 mb-4 items-end">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
-              <select
-                value={viewGroup}
-                onChange={(e) => setViewGroup(e.target.value)}
-                className="border border-gray-400 px-3 py-2 rounded text-gray-900"
-              >
+              <select value={viewGroup} onChange={(e) => setViewGroup(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900">
                 <option value="Elite 1">Elite 1</option>
                 <option value="Elite 2">Elite 2</option>
                 <option value="Elite 3">Elite 3</option>
@@ -465,12 +413,7 @@ export default function AdminPage() {
                 <option value="Elite 5">Elite 5</option>
               </select>
             </div>
-            <button
-              onClick={fetchAllocations}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
-            >
-              Load Data
-            </button>
+            <button onClick={fetchAllocations} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">Load Data</button>
           </div>
           {loadingData ? (
             <p className="text-gray-800">Loading data...</p>
@@ -520,10 +463,7 @@ export default function AdminPage() {
                       {user.med_rep_name ? ` | MedRep: ${user.med_rep_name}` : ''}
                     </p>
                   </div>
-                  <button
-                    onClick={() => approveUser(user.id)}
-                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium"
-                  >
+                  <button onClick={() => approveUser(user.id)} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium">
                     Approve
                   </button>
                 </div>

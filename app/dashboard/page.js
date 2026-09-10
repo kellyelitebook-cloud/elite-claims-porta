@@ -21,6 +21,7 @@ export default function DashboardPage() {
   const [showClientList, setShowClientList] = useState(false)
   const [rejectingId, setRejectingId] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
+  const [deadline, setDeadline] = useState(null)
 
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
@@ -37,16 +38,26 @@ export default function DashboardPage() {
   const isSalesman = profile?.role === 'salesman'
   const isManager = profile?.role === 'manager' || profile?.role === 'rep'
 
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const isClosed = !!(deadline && todayStr > deadline)
+
+  const daysLeft = () => {
+    if (!deadline) return null
+    const today = new Date(todayStr)
+    const end = new Date(deadline)
+    return Math.ceil((end - today) / (1000 * 60 * 60 * 24))
+  }
+
   useEffect(() => {
     getProfile()
   }, [])
 
   useEffect(() => {
-    if (eliteGroup) {
+    if (eliteGroup && profile) {
       fetchAllClients()
       fetchMedReps()
     }
-  }, [eliteGroup])
+  }, [eliteGroup, profile])
 
   useEffect(() => {
     if (selectedClient) fetchProducts()
@@ -75,6 +86,16 @@ export default function DashboardPage() {
     setProfile(data)
     setLoading(false)
     fetchAllClaims()
+    fetchDeadline()
+  }
+
+  const fetchDeadline = async () => {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('claims_deadline')
+      .eq('id', 1)
+      .single()
+    setDeadline(data?.claims_deadline || null)
   }
 
   const fetchAllClaims = async () => {
@@ -82,21 +103,17 @@ export default function DashboardPage() {
       .from('claims')
       .select('*')
       .order('created_at', { ascending: false })
-
     if (error || !claimsData) return
-
     const userIds = [...new Set(claimsData.map(c => c.user_id).filter(Boolean))]
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
         .select('id, full_name, role')
         .in('id', userIds)
-
       const map = {}
       profilesData?.forEach(p => { map[p.id] = p })
       setProfilesMap(map)
     }
-
     setAllClaims(claimsData)
   }
 
@@ -112,9 +129,7 @@ export default function DashboardPage() {
         .select('party_name')
         .eq('elite_group', eliteGroup)
         .range(from, from + pageSize - 1)
-
       if (error) break
-
       if (data && data.length > 0) {
         allPartyNames = [...allPartyNames, ...data.map(item => item.party_name)]
         from += pageSize
@@ -124,7 +139,19 @@ export default function DashboardPage() {
       }
     }
 
-    const uniqueClients = [...new Set(allPartyNames.filter(Boolean))]
+    let uniqueClients = [...new Set(allPartyNames.filter(Boolean))]
+
+    if (profile?.role === 'salesman') {
+      const { data: visData } = await supabase
+        .from('client_visibility')
+        .select('party_name')
+        .eq('elite_group', eliteGroup)
+        .eq('visible_to_salesmen', true)
+
+      const allowed = new Set((visData || []).map(v => v.party_name))
+      uniqueClients = uniqueClients.filter(name => allowed.has(name))
+    }
+
     uniqueClients.sort()
     setClients(uniqueClients)
   }
@@ -134,7 +161,6 @@ export default function DashboardPage() {
       .from('primary_allocations')
       .select('recommended_rep')
       .eq('elite_group', eliteGroup)
-
     if (!error && data) {
       const uniqueReps = [...new Set(
         data
@@ -152,7 +178,6 @@ export default function DashboardPage() {
       .select('product_name, billed_qty')
       .eq('elite_group', eliteGroup)
       .eq('party_name', selectedClient)
-
     if (!error && data) {
       const productMap = {}
       data.forEach(item => {
@@ -179,6 +204,10 @@ export default function DashboardPage() {
 
   const handleSubmitClaim = async (e) => {
     e.preventDefault()
+    if (isClosed) {
+      setMessage(`Claims closed on ${deadline}. No more submissions.`)
+      return
+    }
     if (!selectedClient) {
       setMessage('Please select a client')
       return
@@ -187,7 +216,6 @@ export default function DashboardPage() {
       setMessage('Evidence is required')
       return
     }
-
     const validLines = claimLines.filter(line =>
       line.medRep && line.product && line.qty && Number(line.qty) > 0
     )
@@ -195,29 +223,23 @@ export default function DashboardPage() {
       setMessage('Please add at least one complete claim line')
       return
     }
-
     setSubmitting(true)
     setMessage('Submitting claims...')
-
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const fileExt = evidenceFile.name.split('.').pop()
       const fileName = `${user.id}_${Date.now()}.${fileExt}`
-
       const { error: uploadError } = await supabase.storage
         .from('evidence')
         .upload(fileName, evidenceFile)
-
       if (uploadError) {
         setMessage('Error uploading evidence: ' + uploadError.message)
         setSubmitting(false)
         return
       }
-
       const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
       const evidenceUrl = urlData.publicUrl
       const nextStatus = isSalesman ? 'pending_manager' : 'pending_admin'
-
       const rows = validLines.map(line => ({
         user_id: user.id,
         elite_group: eliteGroup,
@@ -230,7 +252,6 @@ export default function DashboardPage() {
         status: nextStatus,
         reviewed_by: isSalesman ? null : user.id
       }))
-
       const { error } = await supabase.from('claims').insert(rows)
       if (error) {
         setMessage('Error: ' + error.message)
@@ -249,17 +270,14 @@ export default function DashboardPage() {
     } catch (err) {
       setMessage('Something went wrong: ' + err.message)
     }
-
     setSubmitting(false)
   }
 
   const reviewClaim = async (claimId, status, reason = null) => {
     const { data: { user } } = await supabase.auth.getUser()
-
     const updateData = { status }
     if (user?.id) updateData.reviewed_by = user.id
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
-
     const { error } = await supabase.from('claims').update(updateData).eq('id', claimId)
     if (error) setReviewMessage(error.message)
     else {
@@ -281,23 +299,20 @@ export default function DashboardPage() {
     return status
   }
 
+  const remaining = daysLeft()
   const filteredClients = clients.filter(client =>
     client.toLowerCase().includes(clientSearch.toLowerCase())
   )
-
   const visibleClaims = isSalesman
     ? allClaims.filter(c => c.user_id === profile?.id)
     : allClaims
-
   const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager')
-
   const groupedPendingManagerClaims = pendingManagerClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
     if (!acc[group]) acc[group] = []
     acc[group].push(claim)
     return acc
   }, {})
-
   const groupedClaims = visibleClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
     if (!acc[group]) acc[group] = []
@@ -322,6 +337,15 @@ export default function DashboardPage() {
               {isSalesman ? 'Salesman Dashboard' : 'Manager Dashboard'}
             </h1>
             <p className="text-gray-700 font-medium">Welcome, {profile?.full_name}</p>
+            {deadline && (
+              <p className={`text-sm font-medium mt-1 ${isClosed ? 'text-red-700' : 'text-blue-700'}`}>
+                {isClosed
+                  ? `Claims closed on ${deadline}`
+                  : remaining === 0
+                    ? `Claims close today (${deadline})`
+                    : `${remaining} day(s) left. Closes ${deadline}`}
+              </p>
+            )}
           </div>
           <button onClick={handleLogout} className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium">
             Logout
@@ -396,141 +420,136 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
           <p className="text-sm text-gray-700 mb-5">
-            {isSalesman
-              ? 'Pick the MedRep name from the Excel data. Example: TONNY ELD or TONNY KSM.'
-              : 'Use one evidence for many lines. Your claims go directly to admin.'}
+            {isClosed
+              ? 'Claims period is closed. You can view existing claims only.'
+              : isSalesman
+                ? 'You will only see clients allowed by Admin. Ask Admin to allow a missing distributor.'
+                : 'Use one evidence for many lines. Your claims go directly to admin.'}
           </p>
 
           <form onSubmit={handleSubmitClaim} className="space-y-5">
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
-              <select
-                value={eliteGroup}
-                onChange={(e) => {
-                  setEliteGroup(e.target.value)
-                  setSelectedClient('')
-                  setClientSearch('')
-                  setShowClientList(false)
-                  setClaimLines([emptyLine()])
-                }}
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
-              >
-                <option value="Elite 1">Elite 1</option>
-                <option value="Elite 2">Elite 2</option>
-                <option value="Elite 3">Elite 3</option>
-                <option value="Elite 4">Elite 4</option>
-                <option value="Elite 5">Elite 5</option>
-              </select>
-            </div>
+            <fieldset disabled={isClosed} className={isClosed ? 'opacity-60' : ''}>
+              <div className="mb-5">
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
+                <select
+                  value={eliteGroup}
+                  onChange={(e) => {
+                    setEliteGroup(e.target.value)
+                    setSelectedClient('')
+                    setClientSearch('')
+                    setShowClientList(false)
+                    setClaimLines([emptyLine()])
+                  }}
+                  className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white"
+                >
+                  <option value="Elite 1">Elite 1</option>
+                  <option value="Elite 2">Elite 2</option>
+                  <option value="Elite 3">Elite 3</option>
+                  <option value="Elite 4">Elite 4</option>
+                  <option value="Elite 5">Elite 5</option>
+                </select>
+              </div>
 
-            <div className="relative">
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Select Client *</label>
-              <input
-                type="text"
-                value={selectedClient || clientSearch}
-                onChange={(e) => {
-                  setClientSearch(e.target.value)
-                  setSelectedClient('')
-                  setShowClientList(true)
-                }}
-                onFocus={() => setShowClientList(true)}
-                placeholder="Click or type to search client..."
-                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
-                required
-              />
-              {showClientList && (
-                <div className="absolute z-20 w-full mt-1 bg-white border border-gray-400 rounded shadow-lg max-h-60 overflow-y-auto">
-                  {filteredClients.length === 0 ? (
-                    <div className="p-3 text-gray-600 text-sm">No clients found</div>
-                  ) : (
-                    filteredClients.map((client) => (
-                      <div
-                        key={client}
-                        onClick={() => {
-                          setSelectedClient(client)
-                          setClientSearch(client)
-                          setShowClientList(false)
-                        }}
-                        className="px-3 py-2 hover:bg-blue-100 cursor-pointer text-gray-900 text-sm border-b border-gray-100"
-                      >
-                        {client}
+              <div className="relative mb-5">
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Select Client *</label>
+                <input
+                  type="text"
+                  value={selectedClient || clientSearch}
+                  onChange={(e) => {
+                    setClientSearch(e.target.value)
+                    setSelectedClient('')
+                    setShowClientList(true)
+                  }}
+                  onFocus={() => setShowClientList(true)}
+                  placeholder="Click or type to search client..."
+                  className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
+                  required
+                />
+                {showClientList && (
+                  <div className="absolute z-20 w-full mt-1 bg-white border border-gray-400 rounded shadow-lg max-h-60 overflow-y-auto">
+                    {filteredClients.length === 0 ? (
+                      <div className="p-3 text-gray-600 text-sm">
+                        {isSalesman ? 'No allowed clients found. Ask Admin to allow this client.' : 'No clients found'}
                       </div>
-                    ))
-                  )}
-                </div>
-              )}
-              {showClientList && <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>}
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence *</label>
-              <input type="file" accept="image/*,.pdf,.xlsx,.xls" onChange={(e) => setEvidenceFile(e.target.files[0])} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
-              {evidenceFile && <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>}
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-3">
-                <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
-                <button type="button" onClick={addLine} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
-              </div>
-              <div className="space-y-3">
-                {claimLines.map((line, index) => (
-                  <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold mb-1">MedRep *</label>
-                      <select
-                        value={line.medRep}
-                        onChange={(e) => updateLine(line.id, 'medRep', e.target.value)}
-                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
-                        required
-                      >
-                        <option value="">Select</option>
-                        {medReps.map((rep) => (
-                          <option key={rep} value={rep}>{rep}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="md:col-span-4">
-                      <label className="block text-xs font-semibold mb-1">Product *</label>
-                      <select
-                        value={line.product}
-                        onChange={(e) => updateLine(line.id, 'product', e.target.value)}
-                        className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm"
-                        required
-                        disabled={!selectedClient}
-                      >
-                        <option value="">Select</option>
-                        {products.map((product) => (
-                          <option key={product.name} value={product.name}>
-                            {product.name} (Avail: {product.total_qty})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-semibold mb-1">Destination</label>
-                      <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold mb-1">Qty *</label>
-                      <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
-                    </div>
-                    <div className="md:col-span-1 flex items-end">
-                      <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
-                    </div>
-                    <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
+                    ) : (
+                      filteredClients.map((client) => (
+                        <div
+                          key={client}
+                          onClick={() => {
+                            setSelectedClient(client)
+                            setClientSearch(client)
+                            setShowClientList(false)
+                          }}
+                          className="px-3 py-2 hover:bg-blue-100 cursor-pointer text-gray-900 text-sm border-b border-gray-100"
+                        >
+                          {client}
+                        </div>
+                      ))
+                    )}
                   </div>
-                ))}
+                )}
+                {showClientList && <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>}
               </div>
-            </div>
 
-            <button type="submit" disabled={submitting} className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium">
-              {submitting ? 'Submitting...' : 'Submit All Claim Lines'}
+              <div className="mb-5">
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence *</label>
+                <input type="file" accept="image/*,.pdf,.xlsx,.xls" onChange={(e) => setEvidenceFile(e.target.files[0])} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
+                {evidenceFile && <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>}
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-3">
+                  <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
+                  <button type="button" onClick={addLine} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
+                </div>
+                <div className="space-y-3">
+                  {claimLines.map((line, index) => (
+                    <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold mb-1">MedRep *</label>
+                        <select value={line.medRep} onChange={(e) => updateLine(line.id, 'medRep', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required>
+                          <option value="">Select</option>
+                          {medReps.map((rep) => (
+                            <option key={rep} value={rep}>{rep}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold mb-1">Product *</label>
+                        <select value={line.product} onChange={(e) => updateLine(line.id, 'product', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required disabled={!selectedClient}>
+                          <option value="">Select</option>
+                          {products.map((product) => (
+                            <option key={product.name} value={product.name}>
+                              {product.name} (Avail: {product.total_qty})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold mb-1">Destination</label>
+                        <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold mb-1">Qty *</label>
+                        <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
+                      </div>
+                      <div className="md:col-span-1 flex items-end">
+                        <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
+                      </div>
+                      <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </fieldset>
+
+            <button type="submit" disabled={submitting || isClosed} className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium">
+              {isClosed ? 'Claims Closed' : submitting ? 'Submitting...' : 'Submit All Claim Lines'}
             </button>
           </form>
 
           {message && (
-            <p className={`mt-4 text-center text-sm font-medium ${message.includes('Error') ? 'text-red-700' : 'text-green-700'}`}>
+            <p className={`mt-4 text-center text-sm font-medium ${message.includes('Error') || message.includes('closed') ? 'text-red-700' : 'text-green-700'}`}>
               {message}
             </p>
           )}

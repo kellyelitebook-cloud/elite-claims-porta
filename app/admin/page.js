@@ -20,12 +20,23 @@ export default function AdminPage() {
   const [profilesMap, setProfilesMap] = useState({})
   const [rejectingId, setRejectingId] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
+  const [deadline, setDeadline] = useState('')
+  const [visibilityGroup, setVisibilityGroup] = useState('Elite 1')
+  const [clientNames, setClientNames] = useState([])
+  const [visibilityMap, setVisibilityMap] = useState({})
+  const [clientSearch, setClientSearch] = useState('')
+  const [loadingClients, setLoadingClients] = useState(false)
 
   useEffect(() => {
     checkAdmin()
     fetchPendingUsers()
     fetchClaims()
+    fetchDeadline()
   }, [])
+
+  useEffect(() => {
+    fetchClientVisibility()
+  }, [visibilityGroup])
 
   const checkAdmin = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -63,13 +74,11 @@ export default function AdminPage() {
       setLoadingClaims(false)
       return
     }
-
     const userIds = [...new Set(
       claimsData
         .flatMap(c => [c.user_id, c.reviewed_by])
         .filter(Boolean)
     )]
-
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
@@ -79,9 +88,79 @@ export default function AdminPage() {
       profilesData?.forEach(p => { map[p.id] = p })
       setProfilesMap(map)
     }
-
     setClaims(claimsData || [])
     setLoadingClaims(false)
+  }
+
+  const fetchDeadline = async () => {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('claims_deadline')
+      .eq('id', 1)
+      .single()
+    if (data?.claims_deadline) setDeadline(data.claims_deadline)
+  }
+
+  const saveDeadline = async () => {
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({ id: 1, claims_deadline: deadline || null })
+    if (error) setMessage(error.message)
+    else setMessage(deadline ? `Claims deadline set to ${deadline}` : 'Claims deadline cleared')
+  }
+
+  const fetchClientVisibility = async () => {
+    setLoadingClients(true)
+    let allNames = []
+    let from = 0
+    const pageSize = 1000
+    let hasMore = true
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('primary_allocations')
+        .select('party_name')
+        .eq('elite_group', visibilityGroup)
+        .range(from, from + pageSize - 1)
+      if (error) break
+      if (data && data.length > 0) {
+        allNames = [...allNames, ...data.map(item => item.party_name)]
+        from += pageSize
+        hasMore = data.length === pageSize
+      } else {
+        hasMore = false
+      }
+    }
+
+    const unique = [...new Set(allNames.filter(Boolean))].sort()
+    setClientNames(unique)
+
+    const { data: visData } = await supabase
+      .from('client_visibility')
+      .select('party_name, visible_to_salesmen')
+      .eq('elite_group', visibilityGroup)
+
+    const map = {}
+    visData?.forEach(v => { map[v.party_name] = v.visible_to_salesmen })
+    setVisibilityMap(map)
+    setLoadingClients(false)
+  }
+
+  const toggleClientVisibility = async (partyName, makeVisible) => {
+    const { error } = await supabase
+      .from('client_visibility')
+      .upsert({
+        elite_group: visibilityGroup,
+        party_name: partyName,
+        visible_to_salesmen: makeVisible
+      }, { onConflict: 'elite_group,party_name' })
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+    setVisibilityMap(prev => ({ ...prev, [partyName]: makeVisible }))
+    setMessage(`${partyName} is now ${makeVisible ? 'visible' : 'hidden'} for salesmen`)
   }
 
   const approveUser = async (userId) => {
@@ -251,6 +330,10 @@ export default function AdminPage() {
     return acc
   }, {})
 
+  const filteredClients = clientNames.filter(name =>
+    name.toLowerCase().includes(clientSearch.toLowerCase())
+  )
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -274,6 +357,98 @@ export default function AdminPage() {
             {message}
           </div>
         )}
+
+        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">Claims Deadline</h2>
+          <p className="text-sm text-gray-700 mb-3">Salesmen and managers cannot submit claims after this date.</p>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-1">Close claims on</label>
+              <input
+                type="date"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                className="border border-gray-400 px-3 py-2 rounded text-gray-900"
+              />
+            </div>
+            <button onClick={saveDeadline} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">
+              Save Deadline
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Client Visibility for Salesmen</h2>
+          <p className="text-sm text-gray-700 mb-4">Hidden by default. Click Allow when a rep requests a client.</p>
+          <div className="flex flex-wrap gap-3 items-end mb-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
+              <select
+                value={visibilityGroup}
+                onChange={(e) => {
+                  setVisibilityGroup(e.target.value)
+                  setClientSearch('')
+                }}
+                className="border border-gray-400 px-3 py-2 rounded text-gray-900"
+              >
+                <option value="Elite 1">Elite 1</option>
+                <option value="Elite 2">Elite 2</option>
+                <option value="Elite 3">Elite 3</option>
+                <option value="Elite 4">Elite 4</option>
+                <option value="Elite 5">Elite 5</option>
+              </select>
+            </div>
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-sm font-semibold text-gray-800 mb-1">Search client</label>
+              <input
+                type="text"
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                placeholder="Type client name..."
+                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
+              />
+            </div>
+          </div>
+          {loadingClients ? (
+            <p className="text-gray-800">Loading clients...</p>
+          ) : filteredClients.length === 0 ? (
+            <p className="text-gray-700">No clients found.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-96">
+              <table className="w-full text-sm border border-gray-300">
+                <thead className="bg-gray-200 text-gray-900 sticky top-0">
+                  <tr>
+                    <th className="border p-2 text-left">Client</th>
+                    <th className="border p-2 text-left">Salesman Access</th>
+                    <th className="border p-2 text-left">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredClients.map((name) => {
+                    const allowed = !!visibilityMap[name]
+                    return (
+                      <tr key={name} className="hover:bg-gray-50">
+                        <td className="border p-2">{name}</td>
+                        <td className="border p-2">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${allowed ? 'bg-green-200 text-green-900' : 'bg-gray-200 text-gray-800'}`}>
+                            {allowed ? 'Visible' : 'Hidden'}
+                          </span>
+                        </td>
+                        <td className="border p-2">
+                          {allowed ? (
+                            <button onClick={() => toggleClientVisibility(name, false)} className="bg-gray-600 text-white px-3 py-1 rounded text-xs">Hide</button>
+                          ) : (
+                            <button onClick={() => toggleClientVisibility(name, true)} className="bg-green-600 text-white px-3 py-1 rounded text-xs">Allow</button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Upload Primary Allocation</h2>
@@ -308,7 +483,6 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-
           {loadingClaims ? (
             <p className="text-gray-800">Loading claims...</p>
           ) : claims.length === 0 ? (

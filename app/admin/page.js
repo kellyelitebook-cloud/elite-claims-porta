@@ -11,7 +11,6 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [eliteGroup, setEliteGroup] = useState('Elite 1')
   const [viewGroup, setViewGroup] = useState('Elite 1')
   const [allocations, setAllocations] = useState([])
@@ -116,6 +115,7 @@ export default function AdminPage() {
     let from = 0
     const pageSize = 1000
     let hasMore = true
+
     while (hasMore) {
       const { data, error } = await supabase
         .from('primary_allocations')
@@ -131,12 +131,15 @@ export default function AdminPage() {
         hasMore = false
       }
     }
+
     const unique = [...new Set(allNames.filter(Boolean))].sort()
     setClientNames(unique)
+
     const { data: visData } = await supabase
       .from('client_visibility')
       .select('party_name, visible_to_salesmen')
       .eq('elite_group', visibilityGroup)
+
     const map = {}
     visData?.forEach(v => { map[v.party_name] = v.visible_to_salesmen })
     setVisibilityMap(map)
@@ -151,46 +154,13 @@ export default function AdminPage() {
         party_name: partyName,
         visible_to_salesmen: makeVisible
       }, { onConflict: 'elite_group,party_name' })
+
     if (error) {
       setMessage(error.message)
       return
     }
     setVisibilityMap(prev => ({ ...prev, [partyName]: makeVisible }))
     setMessage(`${partyName} is now ${makeVisible ? 'visible' : 'hidden'} for salesmen`)
-  }
-
-  const deleteUploadedData = async (group) => {
-    const ok = window.confirm(`Delete uploaded Excel data for ${group}?\n\nClaims will NOT be deleted.`)
-    if (!ok) return
-    setDeleting(true)
-    const { error } = await supabase
-      .from('primary_allocations')
-      .delete()
-      .eq('elite_group', group)
-    if (error) setMessage('Error deleting: ' + error.message)
-    else {
-      setMessage(`Deleted uploaded Excel data for ${group}. Claims were kept.`)
-      if (viewGroup === group) setAllocations([])
-      if (visibilityGroup === group) fetchClientVisibility()
-    }
-    setDeleting(false)
-  }
-
-  const deleteAllUploadedData = async () => {
-    const ok = window.confirm('Delete uploaded Excel data for ALL Elite groups?\n\nClaims will NOT be deleted.')
-    if (!ok) return
-    setDeleting(true)
-    const { error } = await supabase
-      .from('primary_allocations')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000')
-    if (error) setMessage('Error deleting: ' + error.message)
-    else {
-      setMessage('Deleted all uploaded Excel data. Claims were kept.')
-      setAllocations([])
-      fetchClientVisibility()
-    }
-    setDeleting(false)
   }
 
   const approveUser = async (userId) => {
@@ -222,6 +192,7 @@ export default function AdminPage() {
   }
 
   const canAdminAct = (status) => status === 'pending_admin' || status === 'pending'
+
   const statusLabel = (status) => {
     if (status === 'pending_manager') return 'Waiting Manager'
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
@@ -393,9 +364,16 @@ export default function AdminPage() {
           <div className="flex flex-wrap gap-3 items-end">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Close claims on</label>
-              <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900" />
+              <input
+                type="date"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                className="border border-gray-400 px-3 py-2 rounded text-gray-900"
+              />
             </div>
-            <button onClick={saveDeadline} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">Save Deadline</button>
+            <button onClick={saveDeadline} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">
+              Save Deadline
+            </button>
           </div>
         </div>
 
@@ -405,7 +383,14 @@ export default function AdminPage() {
           <div className="flex flex-wrap gap-3 items-end mb-4">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
-              <select value={visibilityGroup} onChange={(e) => { setVisibilityGroup(e.target.value); setClientSearch('') }} className="border border-gray-400 px-3 py-2 rounded text-gray-900">
+              <select
+                value={visibilityGroup}
+                onChange={(e) => {
+                  setVisibilityGroup(e.target.value)
+                  setClientSearch('')
+                }}
+                className="border border-gray-400 px-3 py-2 rounded text-gray-900"
+              >
                 <option value="Elite 1">Elite 1</option>
                 <option value="Elite 2">Elite 2</option>
                 <option value="Elite 3">Elite 3</option>
@@ -415,7 +400,13 @@ export default function AdminPage() {
             </div>
             <div className="flex-1 min-w-[220px]">
               <label className="block text-sm font-semibold text-gray-800 mb-1">Search client</label>
-              <input type="text" value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} placeholder="Type client name..." className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900" />
+              <input
+                type="text"
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                placeholder="Type client name..."
+                className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900"
+              />
             </div>
           </div>
           {loadingClients ? (
@@ -471,35 +462,11 @@ export default function AdminPage() {
               <option value="Elite 5">Elite 5</option>
             </select>
           </div>
-          <div className="mb-4">
+          <div>
             <label className="block text-sm font-semibold text-gray-800 mb-1">Choose Excel File</label>
-            <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} disabled={uploading || deleting} className="border border-gray-400 p-2 rounded w-full text-gray-900" />
+            <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} disabled={uploading} className="border border-gray-400 p-2 rounded w-full text-gray-900" />
           </div>
           {uploading && <p className="mt-3 text-blue-700 font-medium">Uploading... Please wait</p>}
-          {deleting && <p className="mt-3 text-red-700 font-medium">Deleting uploaded data... Please wait</p>}
-
-          <div className="mt-5 border-t pt-4">
-            <p className="text-sm text-gray-700 mb-3">Delete uploaded Excel only. Claims will stay.</p>
-            <div className="flex flex-wrap gap-2">
-              {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((group) => (
-                <button
-                  key={group}
-                  onClick={() => deleteUploadedData(group)}
-                  disabled={deleting}
-                  className="bg-red-600 text-white px-3 py-1.5 rounded text-sm hover:bg-red-700 font-medium disabled:bg-red-300"
-                >
-                  Delete {group} Data
-                </button>
-              ))}
-              <button
-                onClick={deleteAllUploadedData}
-                disabled={deleting}
-                className="bg-red-800 text-white px-3 py-1.5 rounded text-sm hover:bg-red-900 font-medium disabled:bg-red-300"
-              >
-                Delete All Uploaded Data
-              </button>
-            </div>
-          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">

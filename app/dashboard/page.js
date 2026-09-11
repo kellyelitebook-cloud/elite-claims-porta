@@ -22,6 +22,7 @@ export default function DashboardPage() {
   const [rejectingId, setRejectingId] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const [deadline, setDeadline] = useState(null)
+  const [now, setNow] = useState(Date.now())
 
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
@@ -37,15 +38,20 @@ export default function DashboardPage() {
 
   const isSalesman = profile?.role === 'salesman'
   const isManager = profile?.role === 'manager' || profile?.role === 'rep'
+  const deadlineEnd = deadline ? new Date(`${deadline}T23:59:59`) : null
+  const isClosed = !!(deadlineEnd && now > deadlineEnd.getTime())
 
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const isClosed = !!(deadline && todayStr > deadline)
-
-  const daysLeft = () => {
-    if (!deadline) return null
-    const today = new Date(todayStr)
-    const end = new Date(deadline)
-    return Math.ceil((end - today) / (1000 * 60 * 60 * 24))
+  const countdownText = () => {
+    if (!deadlineEnd) return ''
+    const diff = deadlineEnd.getTime() - now
+    if (diff <= 0) return 'CLAIMS CLOSED'
+    const totalSec = Math.floor(diff / 1000)
+    const days = Math.floor(totalSec / 86400)
+    const hrs = Math.floor((totalSec % 86400) / 3600)
+    const mins = Math.floor((totalSec % 3600) / 60)
+    const secs = totalSec % 60
+    if (days > 0) return `${days}d ${hrs} hrs ${mins} min ${secs} sec`
+    return `${hrs} hrs ${mins} min ${secs} sec`
   }
 
   const evidenceLinks = (value) => {
@@ -55,6 +61,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     getProfile()
+  }, [])
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
   }, [])
 
   useEffect(() => {
@@ -75,19 +86,16 @@ export default function DashboardPage() {
       router.push('/login')
       return
     }
-
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single()
-
     if (error || !data || !data.is_approved) {
       await supabase.auth.signOut()
       router.push('/login')
       return
     }
-
     setProfile(data)
     setLoading(false)
     fetchAllClaims()
@@ -127,7 +135,6 @@ export default function DashboardPage() {
     let from = 0
     const pageSize = 1000
     let hasMore = true
-
     while (hasMore) {
       const { data, error } = await supabase
         .from('primary_allocations')
@@ -143,20 +150,16 @@ export default function DashboardPage() {
         hasMore = false
       }
     }
-
     let uniqueClients = [...new Set(allPartyNames.filter(Boolean))]
-
     if (profile?.role === 'salesman') {
       const { data: visData } = await supabase
         .from('client_visibility')
         .select('party_name')
         .eq('elite_group', eliteGroup)
         .eq('visible_to_salesmen', true)
-
       const allowed = new Set((visData || []).map(v => v.party_name))
       uniqueClients = uniqueClients.filter(name => allowed.has(name))
     }
-
     uniqueClients.sort()
     setClients(uniqueClients)
   }
@@ -233,7 +236,6 @@ export default function DashboardPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const uploadedUrls = []
-
       for (let i = 0; i < evidenceFiles.length; i++) {
         const file = evidenceFiles[i]
         const fileExt = file.name.split('.').pop()
@@ -249,7 +251,6 @@ export default function DashboardPage() {
         const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
         uploadedUrls.push(urlData.publicUrl)
       }
-
       const evidenceUrl = uploadedUrls.join('|')
       const nextStatus = isSalesman ? 'pending_manager' : 'pending_admin'
       const rows = validLines.map(line => ({
@@ -311,7 +312,6 @@ export default function DashboardPage() {
     return status
   }
 
-  const remaining = daysLeft()
   const filteredClients = clients.filter(client =>
     client.toLowerCase().includes(clientSearch.toLowerCase())
   )
@@ -350,13 +350,14 @@ export default function DashboardPage() {
             </h1>
             <p className="text-gray-700 font-medium">Welcome, {profile?.full_name}</p>
             {deadline && (
-              <p className={`text-sm font-medium mt-1 ${isClosed ? 'text-red-700' : 'text-blue-700'}`}>
-                {isClosed
-                  ? `Claims closed on ${deadline}`
-                  : remaining === 0
-                    ? `Claims close today (${deadline})`
-                    : `${remaining} day(s) left. Closes ${deadline}`}
-              </p>
+              <div className="mt-3">
+                <p className={`text-3xl font-extrabold tracking-wide ${isClosed ? 'text-red-700' : 'text-red-600'}`}>
+                  {countdownText()}
+                </p>
+                <p className="text-sm font-medium text-red-700">
+                  {isClosed ? `Closed on ${deadline} at 11:59:59 PM` : `Closes ${deadline} at 11:59:59 PM`}
+                </p>
+              </div>
             )}
           </div>
           <button onClick={handleLogout} className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium">
@@ -440,7 +441,6 @@ export default function DashboardPage() {
                 ? 'You will only see clients allowed by Admin. You can attach more than one evidence photo.'
                 : 'Attach one or many evidence files. Use a separate line for each destination qty.'}
           </p>
-
           <form onSubmit={handleSubmitClaim} className="space-y-5">
             <fieldset disabled={isClosed} className={isClosed ? 'opacity-60' : ''}>
               <div className="mb-5">
@@ -463,7 +463,6 @@ export default function DashboardPage() {
                   <option value="Elite 5">Elite 5</option>
                 </select>
               </div>
-
               <div className="relative mb-5">
                 <label className="block text-sm font-semibold text-gray-800 mb-1">Select Client *</label>
                 <input
@@ -504,7 +503,6 @@ export default function DashboardPage() {
                 )}
                 {showClientList && <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>}
               </div>
-
               <div className="mb-5">
                 <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence * (you can select many)</label>
                 <input
@@ -521,7 +519,6 @@ export default function DashboardPage() {
                   </p>
                 )}
               </div>
-
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <label className="block text-sm font-semibold text-gray-800">Claim Lines</label>
@@ -567,12 +564,10 @@ export default function DashboardPage() {
                 </div>
               </div>
             </fieldset>
-
             <button type="submit" disabled={submitting || isClosed} className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium">
               {isClosed ? 'Claims Closed' : submitting ? 'Submitting...' : 'Submit All Claim Lines'}
             </button>
           </form>
-
           {message && (
             <p className={`mt-4 text-center text-sm font-medium ${message.includes('Error') || message.includes('closed') ? 'text-red-700' : 'text-green-700'}`}>
               {message}

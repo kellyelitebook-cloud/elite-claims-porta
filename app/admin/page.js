@@ -389,7 +389,7 @@ export default function AdminPage() {
 
         <div className="bg-white rounded-lg shadow p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Claims Deadline</h2>
-          <p className="text-sm text-gray-700 mb-3">Salesmen and managers cannot submit claims after this date.</p>
+          <p className="text-sm text-gray-700 mb-3">Salesmen and managers cannot submit claims after 11:59:59 PM on this date. Dashboard will show a live countdown.</p>
           <div className="flex flex-wrap gap-3 items-end">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Close claims on</label>

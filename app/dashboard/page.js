@@ -13,7 +13,7 @@ export default function DashboardPage() {
   const [selectedClient, setSelectedClient] = useState('')
   const [products, setProducts] = useState([])
   const [medReps, setMedReps] = useState([])
-  const [evidenceFile, setEvidenceFile] = useState(null)
+  const [evidenceFiles, setEvidenceFiles] = useState([])
   const [message, setMessage] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -46,6 +46,11 @@ export default function DashboardPage() {
     const today = new Date(todayStr)
     const end = new Date(deadline)
     return Math.ceil((end - today) / (1000 * 60 * 60 * 24))
+  }
+
+  const evidenceLinks = (value) => {
+    if (!value) return []
+    return String(value).split('|').map(v => v.trim()).filter(Boolean)
   }
 
   useEffect(() => {
@@ -212,7 +217,7 @@ export default function DashboardPage() {
       setMessage('Please select a client')
       return
     }
-    if (!evidenceFile) {
+    if (!evidenceFiles.length) {
       setMessage('Evidence is required')
       return
     }
@@ -227,18 +232,25 @@ export default function DashboardPage() {
     setMessage('Submitting claims...')
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      const fileExt = evidenceFile.name.split('.').pop()
-      const fileName = `${user.id}_${Date.now()}.${fileExt}`
-      const { error: uploadError } = await supabase.storage
-        .from('evidence')
-        .upload(fileName, evidenceFile)
-      if (uploadError) {
-        setMessage('Error uploading evidence: ' + uploadError.message)
-        setSubmitting(false)
-        return
+      const uploadedUrls = []
+
+      for (let i = 0; i < evidenceFiles.length; i++) {
+        const file = evidenceFiles[i]
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${user.id}_${Date.now()}_${i}.${fileExt}`
+        const { error: uploadError } = await supabase.storage
+          .from('evidence')
+          .upload(fileName, file)
+        if (uploadError) {
+          setMessage('Error uploading evidence: ' + uploadError.message)
+          setSubmitting(false)
+          return
+        }
+        const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
+        uploadedUrls.push(urlData.publicUrl)
       }
-      const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(fileName)
-      const evidenceUrl = urlData.publicUrl
+
+      const evidenceUrl = uploadedUrls.join('|')
       const nextStatus = isSalesman ? 'pending_manager' : 'pending_admin'
       const rows = validLines.map(line => ({
         user_id: user.id,
@@ -258,12 +270,12 @@ export default function DashboardPage() {
       } else {
         setMessage(
           isSalesman
-            ? `${rows.length} claim(s) submitted. Waiting for manager review.`
-            : `${rows.length} claim(s) submitted. Waiting for admin approval.`
+            ? `${rows.length} claim(s) submitted with ${uploadedUrls.length} evidence file(s). Waiting for manager review.`
+            : `${rows.length} claim(s) submitted with ${uploadedUrls.length} evidence file(s). Waiting for admin approval.`
         )
         setSelectedClient('')
         setClientSearch('')
-        setEvidenceFile(null)
+        setEvidenceFiles([])
         setClaimLines([emptyLine()])
         fetchAllClaims()
       }
@@ -391,7 +403,9 @@ export default function DashboardPage() {
                               <td className="border p-2 text-right">{claim.claimed_qty}</td>
                               <td className="border p-2">{claim.comment || '-'}</td>
                               <td className="border p-2">
-                                {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline">View</a> : '-'}
+                                {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
+                                  <a key={url} href={url} target="_blank" className="text-blue-700 underline mr-2">View {i + 1}</a>
+                                ))}
                               </td>
                               <td className="border p-2">
                                 <div className="flex gap-2 mb-2">
@@ -423,8 +437,8 @@ export default function DashboardPage() {
             {isClosed
               ? 'Claims period is closed. You can view existing claims only.'
               : isSalesman
-                ? 'You will only see clients allowed by Admin. Ask Admin to allow a missing distributor.'
-                : 'Use one evidence for many lines. Your claims go directly to admin.'}
+                ? 'You will only see clients allowed by Admin. You can attach more than one evidence photo.'
+                : 'Attach one or many evidence files. Use a separate line for each destination qty.'}
           </p>
 
           <form onSubmit={handleSubmitClaim} className="space-y-5">
@@ -492,9 +506,20 @@ export default function DashboardPage() {
               </div>
 
               <div className="mb-5">
-                <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence *</label>
-                <input type="file" accept="image/*,.pdf,.xlsx,.xls" onChange={(e) => setEvidenceFile(e.target.files[0])} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
-                {evidenceFile && <p className="text-sm text-gray-700 mt-1 font-medium">Selected: {evidenceFile.name}</p>}
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Supporting Evidence * (you can select many)</label>
+                <input
+                  type="file"
+                  accept="image/*,.pdf,.xlsx,.xls"
+                  multiple
+                  onChange={(e) => setEvidenceFiles(Array.from(e.target.files || []))}
+                  className="w-full border border-gray-400 p-2 rounded text-gray-900"
+                  required
+                />
+                {evidenceFiles.length > 0 && (
+                  <p className="text-sm text-gray-700 mt-1 font-medium">
+                    Selected {evidenceFiles.length} file(s): {evidenceFiles.map(f => f.name).join(', ')}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -608,7 +633,9 @@ export default function DashboardPage() {
                               )}
                             </td>
                             <td className="border border-gray-300 p-2">
-                              {claim.evidence_url ? <a href={claim.evidence_url} target="_blank" className="text-blue-700 hover:underline font-medium">View</a> : '-'}
+                              {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
+                                <a key={url} href={url} target="_blank" className="text-blue-700 hover:underline font-medium mr-2">View {i + 1}</a>
+                              ))}
                             </td>
                           </tr>
                         ))}

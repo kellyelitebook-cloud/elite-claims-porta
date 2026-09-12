@@ -53,6 +53,14 @@ export default function DashboardPage() {
     if (!value) return []
     return String(value).split('|').map(v => v.trim()).filter(Boolean)
   }
+  const changeElite = (value) => {
+    setEliteGroup(value)
+    setSelectedClient('')
+    setClientSearch('')
+    setShowClientList(false)
+    setClaimLines([emptyLine()])
+    setSelectedIds([])
+  }
   useEffect(() => { getProfile() }, [])
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -232,8 +240,9 @@ export default function DashboardPage() {
     return status
   }
   const filteredClients = clients.filter(client => client.toLowerCase().includes(clientSearch.toLowerCase()))
-  const visibleClaims = isSalesman ? allClaims.filter(c => c.user_id === profile?.id) : allClaims
-  const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager')
+  const visibleClaims = (isSalesman ? allClaims.filter(c => c.user_id === profile?.id) : allClaims)
+    .filter(c => c.elite_group === eliteGroup)
+  const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager' && c.elite_group === eliteGroup)
   const groupedPendingManagerClaims = pendingManagerClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
     if (!acc[group]) acc[group] = []
@@ -266,17 +275,28 @@ export default function DashboardPage() {
           <button onClick={handleLogout} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 font-medium">Logout</button>
         </div>
 
+        <div className="bg-white rounded-lg shadow p-4 mb-6 border border-gray-200">
+          <label className="block text-sm font-semibold text-gray-800 mb-1">Select Elite Group</label>
+          <select value={eliteGroup} onChange={(e) => changeElite(e.target.value)} className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
+            <option value="Elite 1">Elite 1</option>
+            <option value="Elite 2">Elite 2</option>
+            <option value="Elite 3">Elite 3</option>
+            <option value="Elite 4">Elite 4</option>
+            <option value="Elite 5">Elite 5</option>
+          </select>
+        </div>
+
         {isManager && (
           <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border border-gray-200">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Review Salesman Claims</h2>
+              <h2 className="text-xl font-bold text-gray-900">Review Salesman Claims — {eliteGroup}</h2>
               <button onClick={approveSelected} disabled={selectedIds.length === 0} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium disabled:bg-green-300">
                 Approve selected to Admin ({selectedIds.length})
               </button>
             </div>
             {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
             {pendingManagerClaims.length === 0 ? (
-              <p className="text-gray-700">No salesman claims waiting for review.</p>
+              <p className="text-gray-700">No {eliteGroup} salesman claims waiting for review.</p>
             ) : (
               <div className="space-y-8">
                 {Object.keys(groupedPendingManagerClaims).sort().map((group) => {
@@ -291,7 +311,6 @@ export default function DashboardPage() {
                           Select all
                         </label>
                       </h3>
-
                       <div className="md:hidden space-y-3">
                         {groupedPendingManagerClaims[group].map((claim) => (
                           <div key={claim.id} className="border border-gray-300 rounded-lg p-3 bg-gray-50">
@@ -323,7 +342,6 @@ export default function DashboardPage() {
                           </div>
                         ))}
                       </div>
-
                       <div className="hidden md:block overflow-x-auto">
                         <table className="w-full text-sm border border-gray-300">
                           <thead className="bg-gray-200">
@@ -382,7 +400,7 @@ export default function DashboardPage() {
         )}
 
         <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch — {eliteGroup}</h2>
           <p className="text-sm text-gray-700 mb-5">
             {isClosed ? 'Claims period is closed. You can view existing claims only.' : isSalesman
               ? 'You will only see clients allowed by Admin. You can attach more than one evidence photo.'
@@ -390,16 +408,6 @@ export default function DashboardPage() {
           </p>
           <form onSubmit={handleSubmitClaim} className="space-y-5">
             <fieldset disabled={isClosed} className={isClosed ? 'opacity-60' : ''}>
-              <div className="mb-5">
-                <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
-                <select value={eliteGroup} onChange={(e) => { setEliteGroup(e.target.value); setSelectedClient(''); setClientSearch(''); setShowClientList(false); setClaimLines([emptyLine()]) }} className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
-                  <option value="Elite 1">Elite 1</option>
-                  <option value="Elite 2">Elite 2</option>
-                  <option value="Elite 3">Elite 3</option>
-                  <option value="Elite 4">Elite 4</option>
-                  <option value="Elite 5">Elite 5</option>
-                </select>
-              </div>
               <div className="relative mb-5">
                 <label className="block text-sm font-semibold text-gray-800 mb-1">Select Client *</label>
                 <input type="text" value={selectedClient || clientSearch} onChange={(e) => { setClientSearch(e.target.value); setSelectedClient(''); setShowClientList(true) }} onFocus={() => setShowClientList(true)} placeholder="Click or type to search client..." className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900" required />
@@ -465,13 +473,13 @@ export default function DashboardPage() {
 
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border border-gray-200">
           <div className="flex justify-between items-center mb-5">
-            <h2 className="text-xl font-bold text-gray-900">{isSalesman ? 'My Claims' : 'All Claims (Grouped by Elite)'}</h2>
+            <h2 className="text-xl font-bold text-gray-900">{isSalesman ? `My Claims — ${eliteGroup}` : `All Claims — ${eliteGroup}`}</h2>
             {isManager && (
               <button onClick={() => setShowHistory(!showHistory)} className="bg-gray-700 text-white px-4 py-2 rounded text-sm font-medium">{showHistory ? 'Hide history' : 'View history'}</button>
             )}
           </div>
           {(isSalesman || showHistory) ? (
-            visibleClaims.length === 0 ? <p className="text-gray-700">No claims submitted yet.</p> : (
+            visibleClaims.length === 0 ? <p className="text-gray-700">No claims for {eliteGroup} yet.</p> : (
               <div className="space-y-8">
                 {Object.keys(groupedClaims).sort().map((group) => (
                   <div key={group}>

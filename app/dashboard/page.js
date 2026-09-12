@@ -23,7 +23,8 @@ export default function DashboardPage() {
   const [rejectionReason, setRejectionReason] = useState('')
   const [deadline, setDeadline] = useState(null)
   const [now, setNow] = useState(Date.now())
-
+  const [selectedIds, setSelectedIds] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
     medRep: '',
@@ -31,16 +32,13 @@ export default function DashboardPage() {
     destination: '',
     qty: ''
   })
-
   const [claimLines, setClaimLines] = useState([emptyLine()])
   const [allClaims, setAllClaims] = useState([])
   const [profilesMap, setProfilesMap] = useState({})
-
   const isSalesman = profile?.role === 'salesman'
   const isManager = profile?.role === 'manager' || profile?.role === 'rep'
   const deadlineEnd = deadline ? new Date(`${deadline}T23:59:59`) : null
   const isClosed = !!(deadlineEnd && now > deadlineEnd.getTime())
-
   const countdownText = () => {
     if (!deadlineEnd) return ''
     const diff = deadlineEnd.getTime() - now
@@ -53,33 +51,27 @@ export default function DashboardPage() {
     if (days > 0) return `${days}d ${hrs} hrs ${mins} min ${secs} sec`
     return `${hrs} hrs ${mins} min ${secs} sec`
   }
-
   const evidenceLinks = (value) => {
     if (!value) return []
     return String(value).split('|').map(v => v.trim()).filter(Boolean)
   }
-
   useEffect(() => {
     getProfile()
   }, [])
-
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
-
   useEffect(() => {
     if (eliteGroup && profile) {
       fetchAllClients()
       fetchMedReps()
     }
   }, [eliteGroup, profile])
-
   useEffect(() => {
     if (selectedClient) fetchProducts()
     else setProducts([])
   }, [selectedClient])
-
   const getProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -101,7 +93,6 @@ export default function DashboardPage() {
     fetchAllClaims()
     fetchDeadline()
   }
-
   const fetchDeadline = async () => {
     const { data } = await supabase
       .from('app_settings')
@@ -110,7 +101,6 @@ export default function DashboardPage() {
       .single()
     setDeadline(data?.claims_deadline || null)
   }
-
   const fetchAllClaims = async () => {
     const { data: claimsData, error } = await supabase
       .from('claims')
@@ -128,8 +118,8 @@ export default function DashboardPage() {
       setProfilesMap(map)
     }
     setAllClaims(claimsData)
+    setSelectedIds([])
   }
-
   const fetchAllClients = async () => {
     let allPartyNames = []
     let from = 0
@@ -163,7 +153,6 @@ export default function DashboardPage() {
     uniqueClients.sort()
     setClients(uniqueClients)
   }
-
   const fetchMedReps = async () => {
     const { data, error } = await supabase
       .from('primary_allocations')
@@ -179,7 +168,6 @@ export default function DashboardPage() {
       setMedReps(uniqueReps)
     }
   }
-
   const fetchProducts = async () => {
     const { data, error } = await supabase
       .from('primary_allocations')
@@ -200,16 +188,21 @@ export default function DashboardPage() {
       setProducts(productList)
     }
   }
-
   const updateLine = (id, field, value) => {
     setClaimLines(prev => prev.map(line => (
       line.id === id ? { ...line, [field]: value } : line
     )))
   }
-
   const addLine = () => setClaimLines(prev => [...prev, emptyLine()])
   const removeLine = (id) => setClaimLines(prev => prev.length === 1 ? prev : prev.filter(line => line.id !== id))
-
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+  const toggleGroupSelect = (ids) => {
+    const allSelected = ids.every(id => selectedIds.includes(id))
+    if (allSelected) setSelectedIds(prev => prev.filter(id => !ids.includes(id)))
+    else setSelectedIds(prev => [...new Set([...prev, ...ids])])
+  }
   const handleSubmitClaim = async (e) => {
     e.preventDefault()
     if (isClosed) {
@@ -285,7 +278,6 @@ export default function DashboardPage() {
     }
     setSubmitting(false)
   }
-
   const reviewClaim = async (claimId, status, reason = null) => {
     const { data: { user } } = await supabase.auth.getUser()
     const updateData = { status }
@@ -300,18 +292,31 @@ export default function DashboardPage() {
       fetchAllClaims()
     }
   }
-
+  const approveSelected = async () => {
+    if (selectedIds.length === 0) {
+      setReviewMessage('Select at least one claim')
+      return
+    }
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase
+      .from('claims')
+      .update({ status: 'pending_admin', reviewed_by: user?.id || null })
+      .in('id', selectedIds)
+    if (error) setReviewMessage(error.message)
+    else {
+      setReviewMessage(`${selectedIds.length} claim(s) sent to admin`)
+      fetchAllClaims()
+    }
+  }
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
-
   const statusLabel = (status) => {
     if (status === 'pending_manager') return 'Waiting Manager'
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
     return status
   }
-
   const filteredClients = clients.filter(client =>
     client.toLowerCase().includes(clientSearch.toLowerCase())
   )
@@ -331,7 +336,6 @@ export default function DashboardPage() {
     acc[group].push(claim)
     return acc
   }, {})
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -339,7 +343,6 @@ export default function DashboardPage() {
       </div>
     )
   }
-
   return (
     <div className="min-h-screen bg-gray-100 p-6 text-gray-900">
       <div className="max-w-6xl mx-auto">
@@ -364,74 +367,91 @@ export default function DashboardPage() {
             Logout
           </button>
         </div>
-
         {isManager && (
           <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Review Salesman Claims</h2>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Review Salesman Claims</h2>
+              <button
+                onClick={approveSelected}
+                disabled={selectedIds.length === 0}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium disabled:bg-green-300"
+              >
+                Approve selected to Admin ({selectedIds.length})
+              </button>
+            </div>
             {reviewMessage && <p className="mb-3 text-sm font-medium text-green-700">{reviewMessage}</p>}
             {pendingManagerClaims.length === 0 ? (
               <p className="text-gray-700">No salesman claims waiting for review.</p>
             ) : (
               <div className="space-y-8">
-                {Object.keys(groupedPendingManagerClaims).sort().map((group) => (
-                  <div key={group}>
-                    <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
-                      {group} — {groupedPendingManagerClaims[group].length} claim(s)
-                    </h3>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm border border-gray-300">
-                        <thead className="bg-gray-200">
-                          <tr>
-                            <th className="border p-2 text-left">Date</th>
-                            <th className="border p-2 text-left">Submitted By</th>
-                            <th className="border p-2 text-left">MedRep</th>
-                            <th className="border p-2 text-left">Client</th>
-                            <th className="border p-2 text-left">Product</th>
-                            <th className="border p-2 text-right">Qty</th>
-                            <th className="border p-2 text-left">Destination</th>
-                            <th className="border p-2 text-left">Evidence</th>
-                            <th className="border p-2 text-left">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {groupedPendingManagerClaims[group].map((claim) => (
-                            <tr key={claim.id}>
-                              <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
-                              <td className="border p-2">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
-                              <td className="border p-2">{claim.med_rep}</td>
-                              <td className="border p-2">{claim.party_name}</td>
-                              <td className="border p-2">{claim.product_name}</td>
-                              <td className="border p-2 text-right">{claim.claimed_qty}</td>
-                              <td className="border p-2">{claim.comment || '-'}</td>
-                              <td className="border p-2">
-                                {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
-                                  <a key={url} href={url} target="_blank" className="text-blue-700 underline mr-2">View {i + 1}</a>
-                                ))}
-                              </td>
-                              <td className="border p-2">
-                                <div className="flex gap-2 mb-2">
-                                  <button onClick={() => reviewClaim(claim.id, 'pending_admin')} className="bg-green-600 text-white px-2 py-1 rounded text-xs">Approve to Admin</button>
-                                  <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Reject</button>
-                                </div>
-                                {rejectingId === claim.id && (
-                                  <div>
-                                    <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full border p-1 text-xs rounded" rows="2" placeholder="Reason" />
-                                    <button onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1">Confirm Reject</button>
-                                  </div>
-                                )}
-                              </td>
+                {Object.keys(groupedPendingManagerClaims).sort().map((group) => {
+                  const groupIds = groupedPendingManagerClaims[group].map(c => c.id)
+                  const allGroupSelected = groupIds.every(id => selectedIds.includes(id))
+                  return (
+                    <div key={group}>
+                      <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
+                        {group} — {groupedPendingManagerClaims[group].length} claim(s)
+                      </h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border border-gray-300">
+                          <thead className="bg-gray-200">
+                            <tr>
+                              <th className="border p-2 text-left">
+                                <input type="checkbox" checked={allGroupSelected} onChange={() => toggleGroupSelect(groupIds)} />
+                              </th>
+                              <th className="border p-2 text-left">Date</th>
+                              <th className="border p-2 text-left">Submitted By</th>
+                              <th className="border p-2 text-left">MedRep</th>
+                              <th className="border p-2 text-left">Client</th>
+                              <th className="border p-2 text-left">Product</th>
+                              <th className="border p-2 text-right">Qty</th>
+                              <th className="border p-2 text-left">Destination</th>
+                              <th className="border p-2 text-left">Evidence</th>
+                              <th className="border p-2 text-left">Action</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {groupedPendingManagerClaims[group].map((claim) => (
+                              <tr key={claim.id}>
+                                <td className="border p-2">
+                                  <input type="checkbox" checked={selectedIds.includes(claim.id)} onChange={() => toggleSelect(claim.id)} />
+                                </td>
+                                <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                                <td className="border p-2">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                                <td className="border p-2">{claim.med_rep}</td>
+                                <td className="border p-2">{claim.party_name}</td>
+                                <td className="border p-2">{claim.product_name}</td>
+                                <td className="border p-2 text-right">{claim.claimed_qty}</td>
+                                <td className="border p-2">{claim.comment || '-'}</td>
+                                <td className="border p-2">
+                                  {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
+                                    <a key={url} href={url} target="_blank" className="text-blue-700 underline mr-2">View {i + 1}</a>
+                                  ))}
+                                </td>
+                                <td className="border p-2">
+                                  <div className="flex gap-2 mb-2">
+                                    <button onClick={() => reviewClaim(claim.id, 'pending_admin')} className="bg-green-600 text-white px-2 py-1 rounded text-xs">Approve to Admin</button>
+                                    <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Reject</button>
+                                  </div>
+                                  {rejectingId === claim.id && (
+                                    <div>
+                                      <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full border p-1 text-xs rounded" rows="2" placeholder="Reason" />
+                                      <button onClick={() => reviewClaim(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs mt-1">Confirm Reject</button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
         )}
-
         <div className="bg-white rounded-lg shadow p-6 mb-8 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch</h2>
           <p className="text-sm text-gray-700 mb-5">
@@ -574,72 +594,82 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
-
         <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 mb-5">
-            {isSalesman ? 'My Claims' : 'All Claims (Grouped by Elite)'}
-          </h2>
-          {visibleClaims.length === 0 ? (
-            <p className="text-gray-700">No claims submitted yet.</p>
-          ) : (
-            <div className="space-y-8">
-              {Object.keys(groupedClaims).sort().map((group) => (
-                <div key={group}>
-                  <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
-                    {group} — {groupedClaims[group].length} claim(s)
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm border border-gray-300">
-                      <thead className="bg-gray-200 text-gray-900">
-                        <tr>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Date</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Submitted By</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">MedRep</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Client</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Product</th>
-                          <th className="border border-gray-300 p-2 text-right font-semibold">Qty</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Comment</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Status</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Evidence</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-gray-900">
-                        {groupedClaims[group].map((claim) => (
-                          <tr key={claim.id} className="hover:bg-gray-50">
-                            <td className="border border-gray-300 p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
-                            <td className="border border-gray-300 p-2 font-medium">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
-                            <td className="border border-gray-300 p-2">{claim.med_rep}</td>
-                            <td className="border border-gray-300 p-2">{claim.party_name}</td>
-                            <td className="border border-gray-300 p-2">{claim.product_name}</td>
-                            <td className="border border-gray-300 p-2 text-right font-medium">{claim.claimed_qty}</td>
-                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
-                            <td className="border border-gray-300 p-2">
-                              <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                claim.status === 'approved' ? 'bg-green-200 text-green-900' :
-                                claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
-                                'bg-yellow-200 text-yellow-900'
-                              }`}>
-                                {statusLabel(claim.status)}
-                              </span>
-                              {claim.status === 'rejected' && claim.rejection_reason && (
-                                <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
-                                  Reason: {claim.rejection_reason}
-                                </p>
-                              )}
-                            </td>
-                            <td className="border border-gray-300 p-2">
-                              {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
-                                <a key={url} href={url} target="_blank" className="text-blue-700 hover:underline font-medium mr-2">View {i + 1}</a>
-                              ))}
-                            </td>
+          <div className="flex justify-between items-center mb-5">
+            <h2 className="text-xl font-bold text-gray-900">
+              {isSalesman ? 'My Claims' : 'All Claims (Grouped by Elite)'}
+            </h2>
+            {isManager && (
+              <button onClick={() => setShowHistory(!showHistory)} className="bg-gray-700 text-white px-4 py-2 rounded text-sm font-medium">
+                {showHistory ? 'Hide history' : 'View history'}
+              </button>
+            )}
+          </div>
+          {(isSalesman || showHistory) ? (
+            visibleClaims.length === 0 ? (
+              <p className="text-gray-700">No claims submitted yet.</p>
+            ) : (
+              <div className="space-y-8">
+                {Object.keys(groupedClaims).sort().map((group) => (
+                  <div key={group}>
+                    <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
+                      {group} — {groupedClaims[group].length} claim(s)
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border border-gray-300">
+                        <thead className="bg-gray-200 text-gray-900">
+                          <tr>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Date</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Submitted By</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">MedRep</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Client</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Product</th>
+                            <th className="border border-gray-300 p-2 text-right font-semibold">Qty</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Comment</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Status</th>
+                            <th className="border border-gray-300 p-2 text-left font-semibold">Evidence</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="text-gray-900">
+                          {groupedClaims[group].map((claim) => (
+                            <tr key={claim.id} className="hover:bg-gray-50">
+                              <td className="border border-gray-300 p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                              <td className="border border-gray-300 p-2 font-medium">{profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                              <td className="border border-gray-300 p-2">{claim.med_rep}</td>
+                              <td className="border border-gray-300 p-2">{claim.party_name}</td>
+                              <td className="border border-gray-300 p-2">{claim.product_name}</td>
+                              <td className="border border-gray-300 p-2 text-right font-medium">{claim.claimed_qty}</td>
+                              <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
+                              <td className="border border-gray-300 p-2">
+                                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                  claim.status === 'approved' ? 'bg-green-200 text-green-900' :
+                                  claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
+                                  'bg-yellow-200 text-yellow-900'
+                                }`}>
+                                  {statusLabel(claim.status)}
+                                </span>
+                                {claim.status === 'rejected' && claim.rejection_reason && (
+                                  <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
+                                    Reason: {claim.rejection_reason}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="border border-gray-300 p-2">
+                                {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
+                                  <a key={url} href={url} target="_blank" className="text-blue-700 hover:underline font-medium mr-2">View {i + 1}</a>
+                                ))}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )
+          ) : (
+            <p className="text-gray-700">History is hidden. Click View history if you need it.</p>
           )}
         </div>
       </div>

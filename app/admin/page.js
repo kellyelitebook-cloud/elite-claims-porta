@@ -1,10 +1,8 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
-
 export default function AdminPage() {
   const router = useRouter()
   const [users, setUsers] = useState([])
@@ -14,6 +12,7 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState(false)
   const [eliteGroup, setEliteGroup] = useState('Elite 1')
   const [viewGroup, setViewGroup] = useState('Elite 1')
+  const [claimsGroup, setClaimsGroup] = useState('Elite 1')
   const [allocations, setAllocations] = useState([])
   const [loadingData, setLoadingData] = useState(false)
   const [claims, setClaims] = useState([])
@@ -27,18 +26,19 @@ export default function AdminPage() {
   const [visibilityMap, setVisibilityMap] = useState({})
   const [clientSearch, setClientSearch] = useState('')
   const [loadingClients, setLoadingClients] = useState(false)
-
   useEffect(() => {
     checkAdmin()
     fetchPendingUsers()
     fetchClaims()
     fetchDeadline()
   }, [])
-
   useEffect(() => {
     fetchClientVisibility()
   }, [visibilityGroup])
-
+  const evidenceLinks = (value) => {
+    if (!value) return []
+    return String(value).split('|').map(v => v.trim()).filter(Boolean)
+  }
   const checkAdmin = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -54,7 +54,6 @@ export default function AdminPage() {
       router.push('/dashboard')
     }
   }
-
   const fetchPendingUsers = async () => {
     const { data, error } = await supabase
       .from('profiles')
@@ -64,7 +63,6 @@ export default function AdminPage() {
     if (!error) setUsers(data || [])
     setLoading(false)
   }
-
   const fetchClaims = async () => {
     setLoadingClaims(true)
     const { data: claimsData, error } = await supabase
@@ -92,7 +90,6 @@ export default function AdminPage() {
     setClaims(claimsData || [])
     setLoadingClaims(false)
   }
-
   const fetchDeadline = async () => {
     const { data } = await supabase
       .from('app_settings')
@@ -101,7 +98,6 @@ export default function AdminPage() {
       .single()
     if (data?.claims_deadline) setDeadline(data.claims_deadline)
   }
-
   const saveDeadline = async () => {
     const { error } = await supabase
       .from('app_settings')
@@ -109,7 +105,6 @@ export default function AdminPage() {
     if (error) setMessage(error.message)
     else setMessage(deadline ? `Claims deadline set to ${deadline}` : 'Claims deadline cleared')
   }
-
   const fetchClientVisibility = async () => {
     setLoadingClients(true)
     let allNames = []
@@ -142,7 +137,6 @@ export default function AdminPage() {
     setVisibilityMap(map)
     setLoadingClients(false)
   }
-
   const toggleClientVisibility = async (partyName, makeVisible) => {
     const { error } = await supabase
       .from('client_visibility')
@@ -158,7 +152,6 @@ export default function AdminPage() {
     setVisibilityMap(prev => ({ ...prev, [partyName]: makeVisible }))
     setMessage(`${partyName} is now ${makeVisible ? 'visible' : 'hidden'} for salesmen`)
   }
-
   const deleteUploadedData = async (group) => {
     const ok = window.confirm(`Delete uploaded Excel data for ${group}?\n\nClaims will NOT be deleted.`)
     if (!ok) return
@@ -175,7 +168,6 @@ export default function AdminPage() {
     }
     setDeleting(false)
   }
-
   const deleteAllUploadedData = async () => {
     const ok = window.confirm('Delete uploaded Excel data for ALL Elite groups?\n\nClaims will NOT be deleted.')
     if (!ok) return
@@ -192,7 +184,6 @@ export default function AdminPage() {
     }
     setDeleting(false)
   }
-
   const approveUser = async (userId) => {
     const { error } = await supabase
       .from('profiles')
@@ -204,7 +195,6 @@ export default function AdminPage() {
       fetchPendingUsers()
     }
   }
-
   const updateClaimStatus = async (claimId, status, reason = null) => {
     const updateData = { status }
     if (status === 'rejected' && reason) updateData.rejection_reason = reason
@@ -220,14 +210,12 @@ export default function AdminPage() {
       fetchClaims()
     }
   }
-
   const canAdminAct = (status) => status === 'pending_admin' || status === 'pending'
   const statusLabel = (status) => {
     if (status === 'pending_manager') return 'Waiting Manager'
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
     return status
   }
-
   const downloadApprovedClaimsByGroup = (group) => {
     const approved = claims.filter(c => c.status === 'approved' && c.elite_group === group)
     if (approved.length === 0) {
@@ -283,12 +271,10 @@ export default function AdminPage() {
     XLSX.writeFile(workbook, `${group}_Claims_Template_${new Date().toISOString().slice(0, 10)}.xlsx`)
     setMessage(`Downloaded ${group} template with ${approved.length} approved claims`)
   }
-
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
-
   const handleFileUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -340,7 +326,6 @@ export default function AdminPage() {
     }
     setUploading(false)
   }
-
   const fetchAllocations = async () => {
     setLoadingData(true)
     const { data, error } = await supabase
@@ -351,18 +336,10 @@ export default function AdminPage() {
     if (!error) setAllocations(data || [])
     setLoadingData(false)
   }
-
-  const groupedClaims = claims.reduce((acc, claim) => {
-    const group = claim.elite_group || 'Unknown'
-    if (!acc[group]) acc[group] = []
-    acc[group].push(claim)
-    return acc
-  }, {})
-
+  const filteredClaims = claims.filter(c => c.elite_group === claimsGroup)
   const filteredClients = clientNames.filter(name =>
     name.toLowerCase().includes(clientSearch.toLowerCase())
   )
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -370,24 +347,21 @@ export default function AdminPage() {
       </div>
     )
   }
-
   return (
-    <div className="min-h-screen bg-gray-100 p-6 text-gray-900">
+    <div className="min-h-screen bg-gray-100 p-4 md:p-6 text-gray-900">
       <div className="max-w-6xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+        <div className="flex justify-between items-center mb-8 gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Admin Dashboard</h1>
           <button onClick={handleLogout} className="bg-red-600 text-white px-5 py-2 rounded hover:bg-red-700 font-medium">
             Logout
           </button>
         </div>
-
         {message && (
           <div className="mb-4 p-3 bg-green-100 text-green-800 rounded font-medium border border-green-300">
             {message}
           </div>
         )}
-
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Claims Deadline</h2>
           <p className="text-sm text-gray-700 mb-3">Salesmen and managers cannot submit claims after 11:59:59 PM on this date. Dashboard will show a live countdown.</p>
           <div className="flex flex-wrap gap-3 items-end">
@@ -398,8 +372,7 @@ export default function AdminPage() {
             <button onClick={saveDeadline} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">Save Deadline</button>
           </div>
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Client Visibility for Salesmen</h2>
           <p className="text-sm text-gray-700 mb-4">Hidden by default. Click Allow when a rep requests a client.</p>
           <div className="flex flex-wrap gap-3 items-end mb-4">
@@ -458,8 +431,7 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Upload Primary Allocation</h2>
           <div className="mb-4">
             <label className="block text-sm font-semibold text-gray-800 mb-1">Select Elite Group</label>
@@ -477,7 +449,6 @@ export default function AdminPage() {
           </div>
           {uploading && <p className="mt-3 text-blue-700 font-medium">Uploading... Please wait</p>}
           {deleting && <p className="mt-3 text-red-700 font-medium">Deleting uploaded data... Please wait</p>}
-
           <div className="mt-5 border-t pt-4">
             <p className="text-sm text-gray-700 mb-3">Delete uploaded Excel only. Claims will stay.</p>
             <div className="flex flex-wrap gap-2">
@@ -501,115 +472,153 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Claims Approval (Grouped by Elite)</h2>
-            <div className="flex flex-wrap gap-2">
-              {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((group) => (
-                <button key={group} onClick={() => downloadApprovedClaimsByGroup(group)} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 font-medium">
-                  Download {group}
-                </button>
-              ))}
-              <button onClick={fetchClaims} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 font-medium">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border">
+          <div className="flex flex-col gap-4 mb-6">
+            <h2 className="text-xl font-bold text-gray-900">Claims Approval — {claimsGroup}</h2>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
+                <select value={claimsGroup} onChange={(e) => setClaimsGroup(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
+                  <option value="Elite 1">Elite 1</option>
+                  <option value="Elite 2">Elite 2</option>
+                  <option value="Elite 3">Elite 3</option>
+                  <option value="Elite 4">Elite 4</option>
+                  <option value="Elite 5">Elite 5</option>
+                </select>
+              </div>
+              <button onClick={() => downloadApprovedClaimsByGroup(claimsGroup)} className="bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">
+                Download {claimsGroup}
+              </button>
+              <button onClick={fetchClaims} className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700 font-medium">
                 Refresh
               </button>
             </div>
           </div>
           {loadingClaims ? (
             <p className="text-gray-800">Loading claims...</p>
-          ) : claims.length === 0 ? (
-            <p className="text-gray-700">No claims submitted yet.</p>
+          ) : filteredClaims.length === 0 ? (
+            <p className="text-gray-700">No claims for {claimsGroup}.</p>
           ) : (
-            <div className="space-y-8">
-              {Object.keys(groupedClaims).sort().map((group) => (
-                <div key={group}>
-                  <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
-                    {group} — {groupedClaims[group].length} claim(s)
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm border border-gray-300">
-                      <thead className="bg-gray-200 text-gray-900">
-                        <tr>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Date</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Approved By</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">MedRep</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Client</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Product</th>
-                          <th className="border border-gray-300 p-2 text-right font-semibold">Qty</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Comment</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Evidence</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Status</th>
-                          <th className="border border-gray-300 p-2 text-left font-semibold">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-gray-900">
-                        {groupedClaims[group].map((claim) => (
-                          <tr key={claim.id} className="hover:bg-gray-50">
-                            <td className="border border-gray-300 p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
-                            <td className="border border-gray-300 p-2 font-medium">
-                              {profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}
-                            </td>
-                            <td className="border border-gray-300 p-2">{claim.med_rep}</td>
-                            <td className="border border-gray-300 p-2">{claim.party_name}</td>
-                            <td className="border border-gray-300 p-2">{claim.product_name}</td>
-                            <td className="border border-gray-300 p-2 text-right font-medium">{claim.claimed_qty}</td>
-                            <td className="border border-gray-300 p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
-                            <td className="border border-gray-300 p-2">
-                              {claim.evidence_url ? (
-                                <a href={claim.evidence_url} target="_blank" className="text-blue-700 underline font-medium">View</a>
-                              ) : '-'}
-                            </td>
-                            <td className="border border-gray-300 p-2">
-                              <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                claim.status === 'approved' ? 'bg-green-200 text-green-900' :
-                                claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
-                                'bg-yellow-200 text-yellow-900'
-                              }`}>
-                                {statusLabel(claim.status)}
-                              </span>
-                              {claim.status === 'rejected' && claim.rejection_reason && (
-                                <p className="text-xs text-red-700 mt-1 font-medium" title={claim.rejection_reason}>
-                                  Reason: {claim.rejection_reason}
-                                </p>
-                              )}
-                            </td>
-                            <td className="border border-gray-300 p-2">
-                              {canAdminAct(claim.status) && (
-                                <div className="space-y-2">
-                                  <div className="flex gap-2">
-                                    <button onClick={() => updateClaimStatus(claim.id, 'approved')} className="bg-green-600 text-white px-2 py-1 rounded text-xs hover:bg-green-700 font-medium">Approve</button>
-                                    <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700 font-medium">Reject</button>
+            <div>
+              <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
+                {claimsGroup} — {filteredClaims.length} claim(s)
+              </h3>
+              <div className="md:hidden space-y-3">
+                {filteredClaims.map((claim) => (
+                  <div key={claim.id} className="border border-gray-300 rounded-lg p-3 bg-gray-50">
+                    <p className="font-bold">{profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}</p>
+                    <p className="text-xs text-gray-600 mb-2">{new Date(claim.created_at).toLocaleDateString()} · {claim.med_rep}</p>
+                    <p className="font-medium">{claim.party_name}</p>
+                    <p className="text-sm">{claim.product_name}</p>
+                    <p className="text-sm mt-1">Qty <b>{claim.claimed_qty}</b> · {claim.comment || '-'}</p>
+                    <div className="my-2">
+                      {evidenceLinks(claim.evidence_url).length === 0 ? <span className="text-gray-500 text-sm">No evidence</span> : evidenceLinks(claim.evidence_url).map((url, i) => (
+                        <a key={url} href={url} target="_blank" className="text-blue-700 underline mr-3">View {i + 1}</a>
+                      ))}
+                    </div>
+                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium mb-2 ${
+                      claim.status === 'approved' ? 'bg-green-200 text-green-900' :
+                      claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
+                      'bg-yellow-200 text-yellow-900'
+                    }`}>{statusLabel(claim.status)}</span>
+                    {claim.status === 'rejected' && claim.rejection_reason && (
+                      <p className="text-xs text-red-700 mb-2">Reason: {claim.rejection_reason}</p>
+                    )}
+                    {canAdminAct(claim.status) && (
+                      <div className="flex gap-2">
+                        <button onClick={() => updateClaimStatus(claim.id, 'approved')} className="flex-1 bg-green-600 text-white py-2 rounded text-sm">Approve</button>
+                        <button onClick={() => setRejectingId(claim.id)} className="flex-1 bg-red-600 text-white py-2 rounded text-sm">Reject</button>
+                      </div>
+                    )}
+                    {claim.status === 'pending_manager' && (
+                      <p className="text-xs text-gray-600">Waiting manager first</p>
+                    )}
+                    {rejectingId === claim.id && (
+                      <div className="mt-2">
+                        <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} placeholder="Reason for rejection..." className="w-full border border-gray-400 p-1 text-xs rounded text-gray-900" rows="2" />
+                        <div className="flex gap-2 mt-1">
+                          <button onClick={() => updateClaimStatus(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs">Confirm Reject</button>
+                          <button onClick={() => { setRejectingId(null); setRejectionReason('') }} className="bg-gray-500 text-white px-2 py-1 rounded text-xs">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm border border-gray-300">
+                  <thead className="bg-gray-200 text-gray-900">
+                    <tr>
+                      <th className="border p-2 text-left">Date</th>
+                      <th className="border p-2 text-left">Approved By</th>
+                      <th className="border p-2 text-left">MedRep</th>
+                      <th className="border p-2 text-left">Client</th>
+                      <th className="border p-2 text-left">Product</th>
+                      <th className="border p-2 text-right">Qty</th>
+                      <th className="border p-2 text-left">Comment</th>
+                      <th className="border p-2 text-left">Evidence</th>
+                      <th className="border p-2 text-left">Status</th>
+                      <th className="border p-2 text-left">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredClaims.map((claim) => (
+                      <tr key={claim.id} className="hover:bg-gray-50">
+                        <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
+                        <td className="border p-2 font-medium">{profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                        <td className="border p-2">{claim.med_rep}</td>
+                        <td className="border p-2">{claim.party_name}</td>
+                        <td className="border p-2">{claim.product_name}</td>
+                        <td className="border p-2 text-right font-medium">{claim.claimed_qty}</td>
+                        <td className="border p-2 max-w-xs truncate" title={claim.comment}>{claim.comment || '-'}</td>
+                        <td className="border p-2">
+                          {evidenceLinks(claim.evidence_url).length === 0 ? '-' : evidenceLinks(claim.evidence_url).map((url, i) => (
+                            <a key={url} href={url} target="_blank" className="text-blue-700 underline font-medium mr-2">View {i + 1}</a>
+                          ))}
+                        </td>
+                        <td className="border p-2">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            claim.status === 'approved' ? 'bg-green-200 text-green-900' :
+                            claim.status === 'rejected' ? 'bg-red-200 text-red-900' :
+                            'bg-yellow-200 text-yellow-900'
+                          }`}>{statusLabel(claim.status)}</span>
+                          {claim.status === 'rejected' && claim.rejection_reason && (
+                            <p className="text-xs text-red-700 mt-1 font-medium">Reason: {claim.rejection_reason}</p>
+                          )}
+                        </td>
+                        <td className="border p-2">
+                          {canAdminAct(claim.status) && (
+                            <div className="space-y-2">
+                              <div className="flex gap-2">
+                                <button onClick={() => updateClaimStatus(claim.id, 'approved')} className="bg-green-600 text-white px-2 py-1 rounded text-xs hover:bg-green-700 font-medium">Approve</button>
+                                <button onClick={() => setRejectingId(claim.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700 font-medium">Reject</button>
+                              </div>
+                              {rejectingId === claim.id && (
+                                <div className="mt-2">
+                                  <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} placeholder="Reason for rejection..." className="w-full border border-gray-400 p-1 text-xs rounded text-gray-900" rows="2" />
+                                  <div className="flex gap-2 mt-1">
+                                    <button onClick={() => updateClaimStatus(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-medium">Confirm Reject</button>
+                                    <button onClick={() => { setRejectingId(null); setRejectionReason('') }} className="bg-gray-500 text-white px-2 py-1 rounded text-xs font-medium">Cancel</button>
                                   </div>
-                                  {rejectingId === claim.id && (
-                                    <div className="mt-2">
-                                      <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} placeholder="Reason for rejection..." className="w-full border border-gray-400 p-1 text-xs rounded text-gray-900" rows="2" />
-                                      <div className="flex gap-2 mt-1">
-                                        <button onClick={() => updateClaimStatus(claim.id, 'rejected', rejectionReason)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-medium">Confirm Reject</button>
-                                        <button onClick={() => { setRejectingId(null); setRejectionReason('') }} className="bg-gray-500 text-white px-2 py-1 rounded text-xs font-medium">Cancel</button>
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
                               )}
-                              {claim.status === 'pending_manager' && (
-                                <span className="text-xs text-gray-600">Waiting manager first</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
+                            </div>
+                          )}
+                          {claim.status === 'pending_manager' && (
+                            <span className="text-xs text-gray-600">Waiting manager first</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">View Uploaded Data</h2>
-          <div className="flex gap-4 mb-4 items-end">
+          <div className="flex gap-4 mb-4 items-end flex-wrap">
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
               <select value={viewGroup} onChange={(e) => setViewGroup(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900">
@@ -631,21 +640,21 @@ export default function AdminPage() {
               <table className="w-full text-sm border border-gray-300">
                 <thead className="bg-gray-200 text-gray-900">
                   <tr>
-                    <th className="border border-gray-300 p-2 text-left font-semibold">Party Name</th>
-                    <th className="border border-gray-300 p-2 text-left font-semibold">Product Name</th>
-                    <th className="border border-gray-300 p-2 text-right font-semibold">Billed Qty</th>
-                    <th className="border border-gray-300 p-2 text-left font-semibold">Recommended Rep</th>
-                    <th className="border border-gray-300 p-2 text-left font-semibold">Status</th>
+                    <th className="border p-2 text-left">Party Name</th>
+                    <th className="border p-2 text-left">Product Name</th>
+                    <th className="border p-2 text-right">Billed Qty</th>
+                    <th className="border p-2 text-left">Recommended Rep</th>
+                    <th className="border p-2 text-left">Status</th>
                   </tr>
                 </thead>
-                <tbody className="text-gray-900">
+                <tbody>
                   {allocations.map((row) => (
                     <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="border border-gray-300 p-2">{row.party_name}</td>
-                      <td className="border border-gray-300 p-2">{row.product_name}</td>
-                      <td className="border border-gray-300 p-2 text-right">{row.billed_qty}</td>
-                      <td className="border border-gray-300 p-2">{row.recommended_rep}</td>
-                      <td className="border border-gray-300 p-2">{row.status}</td>
+                      <td className="border p-2">{row.party_name}</td>
+                      <td className="border p-2">{row.product_name}</td>
+                      <td className="border p-2 text-right">{row.billed_qty}</td>
+                      <td className="border p-2">{row.recommended_rep}</td>
+                      <td className="border p-2">{row.status}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -653,15 +662,14 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 border">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Pending User Approvals</h2>
           {users.length === 0 ? (
             <p className="text-gray-700">No pending users</p>
           ) : (
             <div className="space-y-4">
               {users.map((user) => (
-                <div key={user.id} className="flex justify-between items-center border-b border-gray-300 pb-3">
+                <div key={user.id} className="flex justify-between items-center border-b border-gray-300 pb-3 gap-3">
                   <div>
                     <p className="font-semibold text-gray-900">{user.full_name || 'No name'}</p>
                     <p className="text-sm text-gray-700">{user.email}</p>

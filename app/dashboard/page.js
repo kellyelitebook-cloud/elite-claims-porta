@@ -11,6 +11,7 @@ export default function DashboardPage() {
   const [selectedClient, setSelectedClient] = useState('')
   const [products, setProducts] = useState([])
   const [medReps, setMedReps] = useState([])
+  const [medRepsByGroup, setMedRepsByGroup] = useState({})
   const [evidenceFiles, setEvidenceFiles] = useState([])
   const [message, setMessage] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
@@ -25,6 +26,8 @@ export default function DashboardPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [branches, setBranches] = useState([])
   const [newBranch, setNewBranch] = useState('')
+  const emptyReps = () => ({ 'Elite 1': '', 'Elite 2': '', 'Elite 3': '', 'Elite 4': '', 'Elite 5': '' })
+  const [branchReps, setBranchReps] = useState(emptyReps())
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
     medRep: '',
@@ -40,6 +43,7 @@ export default function DashboardPage() {
   const useBranches = (profile?.full_name || '').toLowerCase().includes('here work')
   const deadlineEnd = deadline ? new Date(`${deadline}T23:59:59`) : null
   const isClosed = !!(deadlineEnd && now > deadlineEnd.getTime())
+  const eliteKey = (g) => g.replace(' ', '_').toLowerCase()
   const countdownText = () => {
     if (!deadlineEnd) return ''
     const diff = deadlineEnd.getTime() - now
@@ -75,6 +79,9 @@ export default function DashboardPage() {
       fetchMedReps()
     }
   }, [eliteGroup, profile])
+  useEffect(() => {
+    if (useBranches && profile) fetchAllGroupMedReps()
+  }, [useBranches, profile])
   useEffect(() => {
     if (selectedClient) fetchProducts()
     else setProducts([])
@@ -137,13 +144,19 @@ export default function DashboardPage() {
     uniqueClients.sort()
     setClients(uniqueClients)
   }
+  const cleanReps = (data) => [...new Set((data || []).map(item => item.recommended_rep).filter(rep => rep && rep.trim() !== '' && rep.toUpperCase() !== 'OFFICE' && rep.toUpperCase() !== 'HEAD OFFICE'))].sort()
   const fetchMedReps = async () => {
     const { data, error } = await supabase.from('primary_allocations').select('recommended_rep').eq('elite_group', eliteGroup)
-    if (!error && data) {
-      const uniqueReps = [...new Set(data.map(item => item.recommended_rep).filter(rep => rep && rep.trim() !== '' && rep.toUpperCase() !== 'OFFICE' && rep.toUpperCase() !== 'HEAD OFFICE'))]
-      uniqueReps.sort()
-      setMedReps(uniqueReps)
+    if (!error && data) setMedReps(cleanReps(data))
+  }
+  const fetchAllGroupMedReps = async () => {
+    const groups = ['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5']
+    const map = {}
+    for (const g of groups) {
+      const { data } = await supabase.from('primary_allocations').select('recommended_rep').eq('elite_group', g)
+      map[g] = cleanReps(data)
     }
+    setMedRepsByGroup(map)
   }
   const fetchProducts = async () => {
     const { data, error } = await supabase.from('primary_allocations').select('product_name, billed_qty').eq('elite_group', eliteGroup).eq('party_name', selectedClient)
@@ -158,11 +171,20 @@ export default function DashboardPage() {
   const fetchBranches = async () => {
     const { data } = await supabase
       .from('my_branches')
-      .select('branch_name')
+      .select('branch_name, elite_1_rep, elite_2_rep, elite_3_rep, elite_4_rep, elite_5_rep')
       .eq('user_id', profile.id)
       .eq('party_name', selectedClient)
       .order('branch_name')
-    setBranches((data || []).map(b => b.branch_name))
+    setBranches((data || []).map(b => ({
+      name: b.branch_name,
+      reps: {
+        'Elite 1': b.elite_1_rep || '',
+        'Elite 2': b.elite_2_rep || '',
+        'Elite 3': b.elite_3_rep || '',
+        'Elite 4': b.elite_4_rep || '',
+        'Elite 5': b.elite_5_rep || ''
+      }
+    })))
   }
   const addBranch = async () => {
     const name = newBranch.trim()
@@ -170,16 +192,27 @@ export default function DashboardPage() {
     const { error } = await supabase.from('my_branches').insert({
       user_id: profile.id,
       party_name: selectedClient,
-      branch_name: name
+      branch_name: name,
+      elite_1_rep: branchReps['Elite 1'] || null,
+      elite_2_rep: branchReps['Elite 2'] || null,
+      elite_3_rep: branchReps['Elite 3'] || null,
+      elite_4_rep: branchReps['Elite 4'] || null,
+      elite_5_rep: branchReps['Elite 5'] || null
     })
     if (error) {
       setMessage(error.message)
       return
     }
     setNewBranch('')
+    setBranchReps(emptyReps())
     fetchBranches()
   }
   const updateLine = (id, field, value) => setClaimLines(prev => prev.map(line => (line.id === id ? { ...line, [field]: value } : line)))
+  const updateDestination = (id, dest) => {
+    const found = branches.find(b => b.name === dest)
+    const autoRep = found?.reps?.[eliteGroup] || ''
+    setClaimLines(prev => prev.map(line => (line.id === id ? { ...line, destination: dest, medRep: autoRep || line.medRep } : line)))
+  }
   const addLine = () => setClaimLines(prev => [...prev, emptyLine()])
   const removeLine = (id) => setClaimLines(prev => prev.length === 1 ? prev : prev.filter(line => line.id !== id))
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -477,9 +510,9 @@ export default function DashboardPage() {
                       <div className="md:col-span-3">
                         <label className="block text-xs font-semibold mb-1">Destination</label>
                         {useBranches ? (
-                          <select value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm">
+                          <select value={line.destination} onChange={(e) => updateDestination(line.id, e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm">
                             <option value="">Select branch</option>
-                            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+                            {branches.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
                           </select>
                         ) : (
                           <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
@@ -497,8 +530,18 @@ export default function DashboardPage() {
                   ))}
                 </div>
                 {useBranches && selectedClient && (
-                  <div className="flex gap-2 mt-3">
-                    <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} placeholder="Add branch for this client" className="flex-1 border border-gray-400 px-2 py-2 rounded text-sm" />
+                  <div className="mt-3 border border-gray-300 rounded p-3 bg-white space-y-2">
+                    <p className="text-sm font-semibold">Add branch for {selectedClient}</p>
+                    <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} placeholder="Branch name e.g. Narok" className="w-full border border-gray-400 px-2 py-2 rounded text-sm" />
+                    {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((g) => (
+                      <div key={g}>
+                        <label className="block text-xs font-semibold mb-1">{g} MedRep</label>
+                        <select value={branchReps[g]} onChange={(e) => setBranchReps(prev => ({ ...prev, [g]: e.target.value }))} className="w-full border border-gray-400 px-2 py-2 rounded text-sm bg-white">
+                          <option value="">Select</option>
+                          {(medRepsByGroup[g] || []).map((rep) => <option key={rep} value={rep}>{rep}</option>)}
+                        </select>
+                      </div>
+                    ))}
                     <button type="button" onClick={addBranch} className="bg-blue-600 text-white px-3 py-2 rounded text-sm">Save branch</button>
                   </div>
                 )}

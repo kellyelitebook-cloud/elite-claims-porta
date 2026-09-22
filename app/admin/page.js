@@ -26,6 +26,8 @@ export default function AdminPage() {
   const [visibilityMap, setVisibilityMap] = useState({})
   const [clientSearch, setClientSearch] = useState('')
   const [loadingClients, setLoadingClients] = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [managerFilter, setManagerFilter] = useState('')
   useEffect(() => {
     checkAdmin()
     fetchPendingUsers()
@@ -88,6 +90,7 @@ export default function AdminPage() {
       setProfilesMap(map)
     }
     setClaims(claimsData || [])
+    setSelectedIds([])
     setLoadingClaims(false)
   }
   const fetchDeadline = async () => {
@@ -211,6 +214,29 @@ export default function AdminPage() {
     }
   }
   const canAdminAct = (status) => status === 'pending_admin' || status === 'pending'
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+  const toggleSelectAllPending = (ids) => {
+    const allSelected = ids.every(id => selectedIds.includes(id))
+    if (allSelected) setSelectedIds(prev => prev.filter(id => !ids.includes(id)))
+    else setSelectedIds(prev => [...new Set([...prev, ...ids])])
+  }
+  const approveSelected = async () => {
+    if (selectedIds.length === 0) {
+      setMessage('Select at least one claim waiting for admin')
+      return
+    }
+    const { error } = await supabase
+      .from('claims')
+      .update({ status: 'approved' })
+      .in('id', selectedIds)
+    if (error) setMessage(error.message)
+    else {
+      setMessage(`${selectedIds.length} claim(s) approved`)
+      fetchClaims()
+    }
+  }
   const statusLabel = (status) => {
     if (status === 'pending_manager') return 'Waiting Manager'
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
@@ -336,7 +362,20 @@ export default function AdminPage() {
     if (!error) setAllocations(data || [])
     setLoadingData(false)
   }
-  const filteredClaims = claims.filter(c => c.elite_group === claimsGroup)
+  const approvedByName = (claim) => profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'
+  const filteredClaims = claims.filter(c => {
+    if (c.elite_group !== claimsGroup) return false
+    if (!managerFilter) return true
+    return approvedByName(c) === managerFilter
+  })
+  const pendingIds = filteredClaims.filter(c => canAdminAct(c.status)).map(c => c.id)
+  const allPendingSelected = pendingIds.length > 0 && pendingIds.every(id => selectedIds.includes(id))
+  const managerNames = [...new Set(
+    claims
+      .filter(c => c.elite_group === claimsGroup)
+      .map(c => approvedByName(c))
+      .filter(Boolean)
+  )].sort()
   const filteredClients = clientNames.filter(name =>
     name.toLowerCase().includes(clientSearch.toLowerCase())
   )
@@ -478,7 +517,7 @@ export default function AdminPage() {
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="block text-sm font-semibold text-gray-800 mb-1">Elite Group</label>
-                <select value={claimsGroup} onChange={(e) => setClaimsGroup(e.target.value)} className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
+                <select value={claimsGroup} onChange={(e) => { setClaimsGroup(e.target.value); setSelectedIds([]); setManagerFilter('') }} className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
                   <option value="Elite 1">Elite 1</option>
                   <option value="Elite 2">Elite 2</option>
                   <option value="Elite 3">Elite 3</option>
@@ -486,6 +525,18 @@ export default function AdminPage() {
                   <option value="Elite 5">Elite 5</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-800 mb-1">Approved By</label>
+                <select value={managerFilter} onChange={(e) => { setManagerFilter(e.target.value); setSelectedIds([]) }} className="border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
+                  <option value="">All managers</option>
+                  {managerNames.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={approveSelected} disabled={selectedIds.length === 0} className="bg-green-700 text-white px-3 py-2 rounded text-sm hover:bg-green-800 font-medium disabled:bg-green-300">
+                Approve selected ({selectedIds.length})
+              </button>
               <button onClick={() => downloadApprovedClaimsByGroup(claimsGroup)} className="bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">
                 Download {claimsGroup}
               </button>
@@ -500,14 +551,27 @@ export default function AdminPage() {
             <p className="text-gray-700">No claims for {claimsGroup}.</p>
           ) : (
             <div>
-              <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200">
-                {claimsGroup} — {filteredClaims.length} claim(s)
+              <h3 className="text-lg font-bold bg-blue-100 text-blue-900 p-3 rounded mb-3 border border-blue-200 flex justify-between items-center">
+                <span>{claimsGroup} — {filteredClaims.length} claim(s)</span>
+                {pendingIds.length > 0 && (
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <input type="checkbox" checked={allPendingSelected} onChange={() => toggleSelectAllPending(pendingIds)} />
+                    Select all waiting admin
+                  </label>
+                )}
               </h3>
               <div className="md:hidden space-y-3">
                 {filteredClaims.map((claim) => (
                   <div key={claim.id} className="border border-gray-300 rounded-lg p-3 bg-gray-50">
-                    <p className="font-bold">{profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}</p>
-                    <p className="text-xs text-gray-600 mb-2">{new Date(claim.created_at).toLocaleDateString()} · {claim.med_rep}</p>
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <p className="font-bold">{approvedByName(claim)}</p>
+                        <p className="text-xs text-gray-600">{new Date(claim.created_at).toLocaleDateString()} · {claim.med_rep}</p>
+                      </div>
+                      {canAdminAct(claim.status) && (
+                        <input type="checkbox" checked={selectedIds.includes(claim.id)} onChange={() => toggleSelect(claim.id)} />
+                      )}
+                    </div>
                     <p className="font-medium">{claim.party_name}</p>
                     <p className="text-sm">{claim.product_name}</p>
                     <p className="text-sm mt-1">Qty <b>{claim.claimed_qty}</b> · {claim.comment || '-'}</p>
@@ -549,6 +613,11 @@ export default function AdminPage() {
                 <table className="w-full text-sm border border-gray-300">
                   <thead className="bg-gray-200 text-gray-900">
                     <tr>
+                      <th className="border p-2 text-left">
+                        {pendingIds.length > 0 && (
+                          <input type="checkbox" checked={allPendingSelected} onChange={() => toggleSelectAllPending(pendingIds)} />
+                        )}
+                      </th>
                       <th className="border p-2 text-left">Date</th>
                       <th className="border p-2 text-left">Approved By</th>
                       <th className="border p-2 text-left">MedRep</th>
@@ -564,8 +633,13 @@ export default function AdminPage() {
                   <tbody>
                     {filteredClaims.map((claim) => (
                       <tr key={claim.id} className="hover:bg-gray-50">
+                        <td className="border p-2">
+                          {canAdminAct(claim.status) && (
+                            <input type="checkbox" checked={selectedIds.includes(claim.id)} onChange={() => toggleSelect(claim.id)} />
+                          )}
+                        </td>
                         <td className="border p-2">{new Date(claim.created_at).toLocaleDateString()}</td>
-                        <td className="border p-2 font-medium">{profilesMap[claim.reviewed_by]?.full_name || profilesMap[claim.user_id]?.full_name || 'Unknown'}</td>
+                        <td className="border p-2 font-medium">{approvedByName(claim)}</td>
                         <td className="border p-2">{claim.med_rep}</td>
                         <td className="border p-2">{claim.party_name}</td>
                         <td className="border p-2">{claim.product_name}</td>

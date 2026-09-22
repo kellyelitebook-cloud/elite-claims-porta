@@ -23,6 +23,8 @@ export default function DashboardPage() {
   const [now, setNow] = useState(Date.now())
   const [selectedIds, setSelectedIds] = useState([])
   const [showHistory, setShowHistory] = useState(false)
+  const [branches, setBranches] = useState([])
+  const [newBranch, setNewBranch] = useState('')
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
     medRep: '',
@@ -35,6 +37,7 @@ export default function DashboardPage() {
   const [profilesMap, setProfilesMap] = useState({})
   const isSalesman = profile?.role === 'salesman'
   const isManager = profile?.role === 'manager' || profile?.role === 'rep'
+  const useBranches = (profile?.full_name || '').toLowerCase().includes('here work')
   const deadlineEnd = deadline ? new Date(`${deadline}T23:59:59`) : null
   const isClosed = !!(deadlineEnd && now > deadlineEnd.getTime())
   const countdownText = () => {
@@ -76,6 +79,10 @@ export default function DashboardPage() {
     if (selectedClient) fetchProducts()
     else setProducts([])
   }, [selectedClient])
+  useEffect(() => {
+    if (useBranches && selectedClient && profile?.id) fetchBranches()
+    else setBranches([])
+  }, [useBranches, selectedClient, profile])
   const getProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
@@ -147,6 +154,30 @@ export default function DashboardPage() {
       })
       setProducts(Object.keys(productMap).map(name => ({ name, total_qty: productMap[name] })).sort((a, b) => a.name.localeCompare(b.name)))
     }
+  }
+  const fetchBranches = async () => {
+    const { data } = await supabase
+      .from('my_branches')
+      .select('branch_name')
+      .eq('user_id', profile.id)
+      .eq('party_name', selectedClient)
+      .order('branch_name')
+    setBranches((data || []).map(b => b.branch_name))
+  }
+  const addBranch = async () => {
+    const name = newBranch.trim()
+    if (!name || !selectedClient || !profile?.id) return
+    const { error } = await supabase.from('my_branches').insert({
+      user_id: profile.id,
+      party_name: selectedClient,
+      branch_name: name
+    })
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+    setNewBranch('')
+    fetchBranches()
   }
   const updateLine = (id, field, value) => setClaimLines(prev => prev.map(line => (line.id === id ? { ...line, [field]: value } : line)))
   const addLine = () => setClaimLines(prev => [...prev, emptyLine()])
@@ -274,7 +305,6 @@ export default function DashboardPage() {
           </div>
           <button onClick={handleLogout} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 font-medium">Logout</button>
         </div>
-
         <div className="bg-white rounded-lg shadow p-4 mb-6 border border-gray-200">
           <label className="block text-sm font-semibold text-gray-800 mb-1">Select Elite Group</label>
           <select value={eliteGroup} onChange={(e) => changeElite(e.target.value)} className="w-full border border-gray-400 px-3 py-2 rounded text-gray-900 bg-white">
@@ -285,7 +315,6 @@ export default function DashboardPage() {
             <option value="Elite 5">Elite 5</option>
           </select>
         </div>
-
         {isManager && (
           <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border border-gray-200">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
@@ -398,7 +427,6 @@ export default function DashboardPage() {
             )}
           </div>
         )}
-
         <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch — {eliteGroup}</h2>
           <p className="text-sm text-gray-700 mb-5">
@@ -448,7 +476,14 @@ export default function DashboardPage() {
                       </div>
                       <div className="md:col-span-3">
                         <label className="block text-xs font-semibold mb-1">Destination</label>
-                        <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
+                        {useBranches ? (
+                          <select value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm">
+                            <option value="">Select branch</option>
+                            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        ) : (
+                          <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
+                        )}
                       </div>
                       <div className="md:col-span-2">
                         <label className="block text-xs font-semibold mb-1">Qty *</label>
@@ -461,6 +496,12 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
+                {useBranches && selectedClient && (
+                  <div className="flex gap-2 mt-3">
+                    <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} placeholder="Add branch for this client" className="flex-1 border border-gray-400 px-2 py-2 rounded text-sm" />
+                    <button type="button" onClick={addBranch} className="bg-blue-600 text-white px-3 py-2 rounded text-sm">Save branch</button>
+                  </div>
+                )}
                 <button type="button" onClick={addLine} className="w-full mt-3 bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
               </div>
             </fieldset>
@@ -470,7 +511,6 @@ export default function DashboardPage() {
           </form>
           {message && <p className={`mt-4 text-center text-sm font-medium ${message.includes('Error') || message.includes('closed') ? 'text-red-700' : 'text-green-700'}`}>{message}</p>}
         </div>
-
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border border-gray-200">
           <div className="flex justify-between items-center mb-5">
             <h2 className="text-xl font-bold text-gray-900">{isSalesman ? `My Claims — ${eliteGroup}` : `All Claims — ${eliteGroup}`}</h2>

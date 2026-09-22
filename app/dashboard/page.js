@@ -28,6 +28,9 @@ export default function DashboardPage() {
   const [newBranch, setNewBranch] = useState('')
   const emptyReps = () => ({ 'Elite 1': '', 'Elite 2': '', 'Elite 3': '', 'Elite 4': '', 'Elite 5': '' })
   const [branchReps, setBranchReps] = useState(emptyReps())
+  const [batchProduct, setBatchProduct] = useState('')
+  const [branchQtys, setBranchQtys] = useState({})
+  const [stagedClaims, setStagedClaims] = useState([])
   const emptyLine = () => ({
     id: Date.now() + Math.random(),
     medRep: '',
@@ -43,7 +46,6 @@ export default function DashboardPage() {
   const useBranches = (profile?.full_name || '').toLowerCase().includes('here work')
   const deadlineEnd = deadline ? new Date(`${deadline}T23:59:59`) : null
   const isClosed = !!(deadlineEnd && now > deadlineEnd.getTime())
-  const eliteKey = (g) => g.replace(' ', '_').toLowerCase()
   const countdownText = () => {
     if (!deadlineEnd) return ''
     const diff = deadlineEnd.getTime() - now
@@ -67,6 +69,9 @@ export default function DashboardPage() {
     setShowClientList(false)
     setClaimLines([emptyLine()])
     setSelectedIds([])
+    setBatchProduct('')
+    setBranchQtys({})
+    setStagedClaims([])
   }
   useEffect(() => { getProfile() }, [])
   useEffect(() => {
@@ -207,6 +212,25 @@ export default function DashboardPage() {
     setBranchReps(emptyReps())
     fetchBranches()
   }
+  const addProductToBatch = () => {
+    if (!batchProduct) { setMessage('Select a product first'); return }
+    const rows = branches
+      .filter(b => Number(branchQtys[b.name]) > 0)
+      .map(b => ({
+        id: Date.now() + Math.random(),
+        product: batchProduct,
+        destination: b.name,
+        qty: Number(branchQtys[b.name]),
+        medRep: b.reps[eliteGroup] || ''
+      }))
+    if (rows.length === 0) { setMessage('Enter quantity on at least one branch'); return }
+    const missingRep = rows.find(r => !r.medRep)
+    if (missingRep) { setMessage(`No MedRep set for ${missingRep.destination} in ${eliteGroup}`); return }
+    setStagedClaims(prev => [...prev, ...rows])
+    setBranchQtys({})
+    setMessage(`${rows.length} line(s) added for ${batchProduct}. Pick next product or submit.`)
+  }
+  const removeStaged = (id) => setStagedClaims(prev => prev.filter(r => r.id !== id))
   const updateLine = (id, field, value) => setClaimLines(prev => prev.map(line => (line.id === id ? { ...line, [field]: value } : line)))
   const updateDestination = (id, dest) => {
     const found = branches.find(b => b.name === dest)
@@ -226,8 +250,10 @@ export default function DashboardPage() {
     if (isClosed) { setMessage(`Claims closed on ${deadline}. No more submissions.`); return }
     if (!selectedClient) { setMessage('Please select a client'); return }
     if (!evidenceFiles.length) { setMessage('Evidence is required'); return }
-    const validLines = claimLines.filter(line => line.medRep && line.product && line.qty && Number(line.qty) > 0)
-    if (validLines.length === 0) { setMessage('Please add at least one complete claim line'); return }
+    const validLines = useBranches
+      ? stagedClaims.filter(line => line.medRep && line.product && line.qty && Number(line.qty) > 0)
+      : claimLines.filter(line => line.medRep && line.product && line.qty && Number(line.qty) > 0)
+    if (validLines.length === 0) { setMessage(useBranches ? 'Add at least one product with branch quantities' : 'Please add at least one complete claim line'); return }
     setSubmitting(true)
     setMessage('Submitting claims...')
     try {
@@ -259,13 +285,14 @@ export default function DashboardPage() {
       const { error } = await supabase.from('claims').insert(rows)
       if (error) setMessage('Error: ' + error.message)
       else {
-        setMessage(isSalesman
-          ? `${rows.length} claim(s) submitted with ${uploadedUrls.length} evidence file(s). Waiting for manager review.`
-          : `${rows.length} claim(s) submitted with ${uploadedUrls.length} evidence file(s). Waiting for admin approval.`)
+        setMessage(`${rows.length} claim(s) submitted with ${uploadedUrls.length} evidence file(s).`)
         setSelectedClient('')
         setClientSearch('')
         setEvidenceFiles([])
         setClaimLines([emptyLine()])
+        setBatchProduct('')
+        setBranchQtys({})
+        setStagedClaims([])
         fetchAllClaims()
       }
     } catch (err) {
@@ -463,7 +490,9 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-4 md:p-6 mb-8 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-900 mb-2">Submit Claims Batch — {eliteGroup}</h2>
           <p className="text-sm text-gray-700 mb-5">
-            {isClosed ? 'Claims period is closed. You can view existing claims only.' : isSalesman
+            {isClosed ? 'Claims period is closed. You can view existing claims only.' : useBranches
+              ? 'Pick a product, type qty on branches, add product, then pick the next product.'
+              : isSalesman
               ? 'You will only see clients allowed by Admin. You can attach more than one evidence photo.'
               : 'Attach one or many evidence files. Use a separate line for each destination qty.'}
           </p>
@@ -488,50 +517,45 @@ export default function DashboardPage() {
                 <input type="file" accept="image/*,.pdf,.xlsx,.xls" multiple onChange={(e) => setEvidenceFiles(Array.from(e.target.files || []))} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
                 {evidenceFiles.length > 0 && <p className="text-sm text-gray-700 mt-1 font-medium">Selected {evidenceFiles.length} file(s): {evidenceFiles.map(f => f.name).join(', ')}</p>}
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-800 mb-3">Claim Lines</label>
-                <div className="space-y-3">
-                  {claimLines.map((line, index) => (
-                    <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-semibold mb-1">MedRep *</label>
-                        <select value={line.medRep} onChange={(e) => updateLine(line.id, 'medRep', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required>
-                          <option value="">Select</option>
-                          {medReps.map((rep) => <option key={rep} value={rep}>{rep}</option>)}
-                        </select>
-                      </div>
-                      <div className="md:col-span-4">
-                        <label className="block text-xs font-semibold mb-1">Product *</label>
-                        <select value={line.product} onChange={(e) => updateLine(line.id, 'product', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required disabled={!selectedClient}>
-                          <option value="">Select</option>
-                          {products.map((product) => <option key={product.name} value={product.name}>{product.name} (Avail: {product.total_qty})</option>)}
-                        </select>
-                      </div>
-                      <div className="md:col-span-3">
-                        <label className="block text-xs font-semibold mb-1">Destination</label>
-                        {useBranches ? (
-                          <select value={line.destination} onChange={(e) => updateDestination(line.id, e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm">
-                            <option value="">Select branch</option>
-                            {branches.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
-                          </select>
-                        ) : (
-                          <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
-                        )}
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-semibold mb-1">Qty *</label>
-                        <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
-                      </div>
-                      <div className="md:col-span-1 flex items-end">
-                        <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
-                      </div>
-                      <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
+
+              {useBranches ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-800 mb-1">Product</label>
+                    <select value={batchProduct} onChange={(e) => setBatchProduct(e.target.value)} className="w-full border border-gray-400 px-3 py-2 rounded bg-white" disabled={!selectedClient}>
+                      <option value="">Select product</option>
+                      {products.map((product) => <option key={product.name} value={product.name}>{product.name} (Avail: {product.total_qty})</option>)}
+                    </select>
+                  </div>
+                  {branches.length === 0 ? (
+                    <p className="text-sm text-gray-700">Save branches for this client first.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {branches.map((b) => (
+                        <div key={b.name} className="flex items-center gap-3 border border-gray-300 rounded p-2 bg-gray-50">
+                          <div className="flex-1">
+                            <p className="font-medium">{b.name}</p>
+                            <p className="text-xs text-gray-600">{b.reps[eliteGroup] || 'No MedRep for this Elite'}</p>
+                          </div>
+                          <input type="number" min="0" value={branchQtys[b.name] || ''} onChange={(e) => setBranchQtys(prev => ({ ...prev, [b.name]: e.target.value }))} className="w-24 border border-gray-400 px-2 py-2 rounded text-sm" placeholder="Qty" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                {useBranches && selectedClient && (
-                  <div className="mt-3 border border-gray-300 rounded p-3 bg-white space-y-2">
-                    <p className="text-sm font-semibold">Add branch for {selectedClient}</p>
+                  )}
+                  <button type="button" onClick={addProductToBatch} className="w-full bg-green-600 text-white py-2 rounded font-medium">Add this product</button>
+                  {stagedClaims.length > 0 && (
+                    <div className="border border-gray-300 rounded p-3">
+                      <p className="font-semibold mb-2">Ready to submit ({stagedClaims.length})</p>
+                      {stagedClaims.map((row) => (
+                        <div key={row.id} className="flex justify-between text-sm border-b py-1">
+                          <span>{row.product} → {row.destination} · {row.medRep} · {row.qty}</span>
+                          <button type="button" onClick={() => removeStaged(row.id)} className="text-red-600">Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="border border-gray-300 rounded p-3 bg-white space-y-2">
+                    <p className="text-sm font-semibold">Add branch for {selectedClient || 'this client'}</p>
                     <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} placeholder="Branch name e.g. Narok" className="w-full border border-gray-400 px-2 py-2 rounded text-sm" />
                     {['Elite 1', 'Elite 2', 'Elite 3', 'Elite 4', 'Elite 5'].map((g) => (
                       <div key={g}>
@@ -544,9 +568,45 @@ export default function DashboardPage() {
                     ))}
                     <button type="button" onClick={addBranch} className="bg-blue-600 text-white px-3 py-2 rounded text-sm">Save branch</button>
                   </div>
-                )}
-                <button type="button" onClick={addLine} className="w-full mt-3 bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
-              </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-800 mb-3">Claim Lines</label>
+                  <div className="space-y-3">
+                    {claimLines.map((line, index) => (
+                      <div key={line.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 border border-gray-300 rounded p-3 bg-gray-50">
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-semibold mb-1">MedRep *</label>
+                          <select value={line.medRep} onChange={(e) => updateLine(line.id, 'medRep', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required>
+                            <option value="">Select</option>
+                            {medReps.map((rep) => <option key={rep} value={rep}>{rep}</option>)}
+                          </select>
+                        </div>
+                        <div className="md:col-span-4">
+                          <label className="block text-xs font-semibold mb-1">Product *</label>
+                          <select value={line.product} onChange={(e) => updateLine(line.id, 'product', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 bg-white text-sm" required disabled={!selectedClient}>
+                            <option value="">Select</option>
+                            {products.map((product) => <option key={product.name} value={product.name}>{product.name} (Avail: {product.total_qty})</option>)}
+                          </select>
+                        </div>
+                        <div className="md:col-span-3">
+                          <label className="block text-xs font-semibold mb-1">Destination</label>
+                          <input type="text" value={line.destination} onChange={(e) => updateLine(line.id, 'destination', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" placeholder="Meru / Thika / Eldoret" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-semibold mb-1">Qty *</label>
+                          <input type="number" min="1" value={line.qty} onChange={(e) => updateLine(line.id, 'qty', e.target.value)} className="w-full border border-gray-400 px-2 py-2 rounded text-gray-900 text-sm" required />
+                        </div>
+                        <div className="md:col-span-1 flex items-end">
+                          <button type="button" onClick={() => removeLine(line.id)} className="w-full bg-red-600 text-white px-2 py-2 rounded text-sm hover:bg-red-700" disabled={claimLines.length === 1}>X</button>
+                        </div>
+                        <p className="md:col-span-12 text-xs text-gray-600">Line {index + 1}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={addLine} className="w-full mt-3 bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">+ Add Line</button>
+                </div>
+              )}
             </fieldset>
             <button type="submit" disabled={submitting || isClosed} className="w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 disabled:bg-blue-300 font-medium">
               {isClosed ? 'Claims Closed' : submitting ? 'Submitting...' : 'Submit All Claim Lines'}

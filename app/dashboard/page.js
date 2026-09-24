@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const [deadline, setDeadline] = useState(null)
   const [now, setNow] = useState(Date.now())
   const [selectedIds, setSelectedIds] = useState([])
-  const [showHistory, setShowHistory] = useState(false)
+  const [showHistory, setShowHistory] = useState(true)
   const [branches, setBranches] = useState([])
   const [newBranch, setNewBranch] = useState('')
   const emptyReps = () => ({ 'Elite 1': '', 'Elite 2': '', 'Elite 3': '', 'Elite 4': '', 'Elite 5': '' })
@@ -114,9 +114,24 @@ export default function DashboardPage() {
     setDeadline(data?.claims_deadline || null)
   }
   const fetchAllClaims = async () => {
-    const { data: claimsData, error } = await supabase.from('claims').select('*').order('created_at', { ascending: false })
-    if (error || !claimsData) return
-    const userIds = [...new Set(claimsData.map(c => c.user_id).filter(Boolean))]
+    let claimsData = []
+    let from = 0
+    const pageSize = 1000
+    let hasMore = true
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('claims')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error) return
+      if (data && data.length > 0) {
+        claimsData = [...claimsData, ...data]
+        from += pageSize
+        hasMore = data.length === pageSize
+      } else hasMore = false
+    }
+    const userIds = [...new Set(claimsData.flatMap(c => [c.user_id, c.reviewed_by]).filter(Boolean))]
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase.from('profiles').select('id, full_name, role').in('id', userIds)
       const map = {}
@@ -331,8 +346,18 @@ export default function DashboardPage() {
     return status
   }
   const filteredClients = clients.filter(client => client.toLowerCase().includes(clientSearch.toLowerCase()))
-  const visibleClaims = (isSalesman ? allClaims.filter(c => c.user_id === profile?.id) : allClaims)
-    .filter(c => c.elite_group === eliteGroup)
+  const myRepNames = [profile?.med_rep_name, profile?.full_name]
+    .filter(Boolean)
+    .map(n => n.trim().toUpperCase())
+  const matchesMyRep = (medRep) => {
+    const name = String(medRep || '').trim().toUpperCase()
+    if (!name) return false
+    return myRepNames.some(mine => name === mine || name.includes(mine) || mine.includes(name))
+  }
+  const visibleClaims = (isSalesman
+    ? allClaims.filter(c => c.user_id === profile?.id || matchesMyRep(c.med_rep))
+    : allClaims
+  ).filter(c => c.elite_group === eliteGroup)
   const pendingManagerClaims = allClaims.filter(c => c.status === 'pending_manager' && c.elite_group === eliteGroup)
   const groupedPendingManagerClaims = pendingManagerClaims.reduce((acc, claim) => {
     const group = claim.elite_group || 'Unknown'
@@ -517,7 +542,6 @@ export default function DashboardPage() {
                 <input type="file" accept="image/*,.pdf,.xlsx,.xls" multiple onChange={(e) => setEvidenceFiles(Array.from(e.target.files || []))} className="w-full border border-gray-400 p-2 rounded text-gray-900" required />
                 {evidenceFiles.length > 0 && <p className="text-sm text-gray-700 mt-1 font-medium">Selected {evidenceFiles.length} file(s): {evidenceFiles.map(f => f.name).join(', ')}</p>}
               </div>
-
               {useBranches ? (
                 <div className="space-y-4">
                   <div>

@@ -41,6 +41,24 @@ export default function AdminPage() {
     if (!value) return []
     return String(value).split('|').map(v => v.trim()).filter(Boolean)
   }
+  const fetchAllRows = async (buildQuery) => {
+    let all = []
+    let from = 0
+    const pageSize = 1000
+    let hasMore = true
+    while (hasMore) {
+      const { data, error } = await buildQuery(from, from + pageSize - 1)
+      if (error) return { data: all, error }
+      if (data && data.length > 0) {
+        all = [...all, ...data]
+        from += pageSize
+        hasMore = data.length === pageSize
+      } else {
+        hasMore = false
+      }
+    }
+    return { data: all, error: null }
+  }
   const checkAdmin = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -67,16 +85,15 @@ export default function AdminPage() {
   }
   const fetchClaims = async () => {
     setLoadingClaims(true)
-    const { data: claimsData, error } = await supabase
-      .from('claims')
-      .select('*')
-      .order('created_at', { ascending: false })
+    const { data: claimsData, error } = await fetchAllRows((from, to) =>
+      supabase.from('claims').select('*').order('created_at', { ascending: false }).range(from, to)
+    )
     if (error) {
       setLoadingClaims(false)
       return
     }
     const userIds = [...new Set(
-      claimsData
+      (claimsData || [])
         .flatMap(c => [c.user_id, c.reviewed_by])
         .filter(Boolean)
     )]
@@ -110,26 +127,10 @@ export default function AdminPage() {
   }
   const fetchClientVisibility = async () => {
     setLoadingClients(true)
-    let allNames = []
-    let from = 0
-    const pageSize = 1000
-    let hasMore = true
-    while (hasMore) {
-      const { data, error } = await supabase
-        .from('primary_allocations')
-        .select('party_name')
-        .eq('elite_group', visibilityGroup)
-        .range(from, from + pageSize - 1)
-      if (error) break
-      if (data && data.length > 0) {
-        allNames = [...allNames, ...data.map(item => item.party_name)]
-        from += pageSize
-        hasMore = data.length === pageSize
-      } else {
-        hasMore = false
-      }
-    }
-    const unique = [...new Set(allNames.filter(Boolean))].sort()
+    const { data: nameRows } = await fetchAllRows((from, to) =>
+      supabase.from('primary_allocations').select('party_name').eq('elite_group', visibilityGroup).range(from, to)
+    )
+    const unique = [...new Set((nameRows || []).map(item => item.party_name).filter(Boolean))].sort()
     setClientNames(unique)
     const { data: visData } = await supabase
       .from('client_visibility')
@@ -242,13 +243,25 @@ export default function AdminPage() {
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
     return status
   }
-  const downloadApprovedClaimsByGroup = (group) => {
-    const approved = claims.filter(c => c.status === 'approved' && c.elite_group === group)
-    if (approved.length === 0) {
+  const downloadApprovedClaimsByGroup = async (group) => {
+    setMessage(`Loading all approved claims for ${group}...`)
+    const { data: approved, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('claims')
+        .select('party_name, med_rep, product_name, claimed_qty, status, elite_group')
+        .eq('elite_group', group)
+        .eq('status', 'approved')
+        .range(from, to)
+    )
+    if (error) {
+      setMessage('Error downloading: ' + error.message)
+      return
+    }
+    if (!approved || approved.length === 0) {
       setMessage(`No approved claims found for ${group}`)
       return
     }
-    const products = [...new Set(approved.map(c => c.product_name))].sort()
+    const products = [...new Set(approved.map(c => c.product_name).filter(Boolean))].sort()
     const uniqueKeys = {}
     approved.forEach(claim => {
       const key = `${claim.party_name}|||${claim.med_rep}`
@@ -260,42 +273,32 @@ export default function AdminPage() {
         }
       }
       uniqueKeys[key].products[claim.product_name] =
-        (uniqueKeys[key].products[claim.product_name] || 0) + Number(claim.claimed_qty)
+        (uniqueKeys[key].products[claim.product_name] || 0) + Number(claim.claimed_qty || 0)
     })
-    const dataRows = Object.values(uniqueKeys).map(item => {
-      const row = {
-        'DISTRIBUTOR': item.distributor,
-        'REP NAME': item.medRep
-      }
-      products.forEach(product => {
-        row[product] = item.products[product] || ''
-      })
-      return row
-    })
-    dataRows.sort((a, b) => {
-      if (a.DISTRIBUTOR < b.DISTRIBUTOR) return -1
-      if (a.DISTRIBUTOR > b.DISTRIBUTOR) return 1
-      if (a['REP NAME'] < b['REP NAME']) return -1
-      if (a['REP NAME'] > b['REP NAME']) return 1
+    const dataRows = Object.values(uniqueKeys).sort((a, b) => {
+      if (a.distributor < b.distributor) return -1
+      if (a.distributor > b.distributor) return 1
+      if (a.medRep < b.medRep) return -1
+      if (a.medRep > b.medRep) return 1
       return 0
     })
     const header = ['DISTRIBUTOR', 'REP NAME', ...products]
     const aoa = [
       [`${group.toUpperCase()} CLAIMS TEMPLATE`],
-      ['Instructions: Fill only the Claimed Qty column for each Rep'],
+      ['Approved claims only. All approved rows included.'],
       [],
       header,
     ]
     dataRows.forEach(row => {
-      const line = [row['DISTRIBUTOR'], row['REP NAME']]
-      products.forEach(p => line.push(row[p] || ''))
+      const line = [row.distributor, row.medRep]
+      products.forEach(p => line.push(row.products[p] || ''))
       aoa.push(line)
     })
     const worksheet = XLSX.utils.aoa_to_sheet(aoa)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, `${group} Claims`)
     XLSX.writeFile(workbook, `${group}_Claims_Template_${new Date().toISOString().slice(0, 10)}.xlsx`)
-    setMessage(`Downloaded ${group} template with ${approved.length} approved claims`)
+    setMessage(`Downloaded ${group}: ${approved.length} approved lines, ${dataRows.length} client/rep rows`)
   }
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -354,11 +357,9 @@ export default function AdminPage() {
   }
   const fetchAllocations = async () => {
     setLoadingData(true)
-    const { data, error } = await supabase
-      .from('primary_allocations')
-      .select('*')
-      .eq('elite_group', viewGroup)
-      .order('party_name')
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase.from('primary_allocations').select('*').eq('elite_group', viewGroup).order('party_name').range(from, to)
+    )
     if (!error) setAllocations(data || [])
     setLoadingData(false)
   }

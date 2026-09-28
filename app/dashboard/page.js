@@ -349,10 +349,16 @@ export default function DashboardPage() {
   const myRepNames = [profile?.med_rep_name, profile?.full_name]
     .filter(Boolean)
     .map(n => n.trim().toUpperCase())
+  const nameTokens = (value) => String(value || '').toUpperCase().trim().split(/\s+/).filter(t => t.length >= 3)
   const matchesMyRep = (medRep) => {
     const name = String(medRep || '').trim().toUpperCase()
     if (!name) return false
-    return myRepNames.some(mine => name === mine || name.includes(mine) || mine.includes(name))
+    const claimTokens = nameTokens(name)
+    return myRepNames.some(mine => {
+      if (name === mine || name.includes(mine) || mine.includes(name)) return true
+      const profileTokens = nameTokens(mine)
+      return claimTokens.some(t => profileTokens.includes(t))
+    })
   }
   const visibleClaims = (isSalesman
     ? allClaims.filter(c => c.user_id === profile?.id || matchesMyRep(c.med_rep))

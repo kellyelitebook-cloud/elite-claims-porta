@@ -214,6 +214,17 @@ export default function AdminPage() {
       fetchClaims()
     }
   }
+  const reopenClaim = async (claimId) => {
+    const { error } = await supabase
+      .from('claims')
+      .update({ status: 'pending_admin', rejection_reason: null })
+      .eq('id', claimId)
+    if (error) setMessage(error.message)
+    else {
+      setMessage('Claim reopened. It is waiting admin again.')
+      fetchClaims()
+    }
+  }
   const canAdminAct = (status) => status === 'pending_admin' || status === 'pending'
   const toggleSelect = (id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -235,6 +246,23 @@ export default function AdminPage() {
     if (error) setMessage(error.message)
     else {
       setMessage(`${selectedIds.length} claim(s) approved`)
+      fetchClaims()
+    }
+  }
+  const rejectSelected = async () => {
+    if (selectedIds.length === 0) {
+      setMessage('Select at least one claim waiting for admin')
+      return
+    }
+    const reason = window.prompt(`Reason for rejecting ${selectedIds.length} selected claim(s):`)
+    if (reason === null) return
+    const { error } = await supabase
+      .from('claims')
+      .update({ status: 'rejected', rejection_reason: reason || 'Rejected in bulk' })
+      .in('id', selectedIds)
+    if (error) setMessage(error.message)
+    else {
+      setMessage(`${selectedIds.length} claim(s) rejected`)
       fetchClaims()
     }
   }
@@ -538,6 +566,9 @@ export default function AdminPage() {
               <button onClick={approveSelected} disabled={selectedIds.length === 0} className="bg-green-700 text-white px-3 py-2 rounded text-sm hover:bg-green-800 font-medium disabled:bg-green-300">
                 Approve selected ({selectedIds.length})
               </button>
+              <button onClick={rejectSelected} disabled={selectedIds.length === 0} className="bg-red-700 text-white px-3 py-2 rounded text-sm hover:bg-red-800 font-medium disabled:bg-red-300">
+                Reject selected ({selectedIds.length})
+              </button>
               <button onClick={() => downloadApprovedClaimsByGroup(claimsGroup)} className="bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 font-medium">
                 Download {claimsGroup}
               </button>
@@ -594,6 +625,9 @@ export default function AdminPage() {
                         <button onClick={() => updateClaimStatus(claim.id, 'approved')} className="flex-1 bg-green-600 text-white py-2 rounded text-sm">Approve</button>
                         <button onClick={() => setRejectingId(claim.id)} className="flex-1 bg-red-600 text-white py-2 rounded text-sm">Reject</button>
                       </div>
+                    )}
+                    {claim.status === 'rejected' && (
+                      <button onClick={() => reopenClaim(claim.id)} className="w-full bg-yellow-600 text-white py-2 rounded text-sm mt-2">Reopen to Waiting Admin</button>
                     )}
                     {claim.status === 'pending_manager' && (
                       <p className="text-xs text-gray-600">Waiting manager first</p>
@@ -678,6 +712,9 @@ export default function AdminPage() {
                                 </div>
                               )}
                             </div>
+                          )}
+                          {claim.status === 'rejected' && (
+                            <button onClick={() => reopenClaim(claim.id)} className="bg-yellow-600 text-white px-2 py-1 rounded text-xs hover:bg-yellow-700 font-medium">Reopen</button>
                           )}
                           {claim.status === 'pending_manager' && (
                             <span className="text-xs text-gray-600">Waiting manager first</span>

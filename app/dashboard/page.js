@@ -345,19 +345,14 @@ export default function DashboardPage() {
     if (status === 'pending_admin' || status === 'pending') return 'Waiting Admin'
     return status
   }
-    const myRepNames = [profile?.med_rep_name, profile?.full_name]
+  const filteredClients = clients.filter(client => client.toLowerCase().includes(clientSearch.toLowerCase()))
+  const myRepNames = [profile?.med_rep_name, profile?.full_name]
     .filter(Boolean)
     .map(n => n.trim().toUpperCase())
-  const nameTokens = (value) => String(value || '').toUpperCase().trim().split(/\s+/).filter(t => t.length >= 3)
   const matchesMyRep = (medRep) => {
     const name = String(medRep || '').trim().toUpperCase()
     if (!name) return false
-    const claimTokens = nameTokens(name)
-    return myRepNames.some(mine => {
-      if (name === mine || name.includes(mine) || mine.includes(name)) return true
-      const profileTokens = nameTokens(mine)
-      return claimTokens.some(t => profileTokens.includes(t))
-    })
+    return myRepNames.some(mine => name === mine || name.includes(mine) || mine.includes(name))
   }
   const visibleClaims = (isSalesman
     ? allClaims.filter(c => c.user_id === profile?.id || matchesMyRep(c.med_rep))
